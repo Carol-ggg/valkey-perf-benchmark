@@ -8,6 +8,7 @@ import logging
 import random
 import re
 import string
+import struct
 import subprocess
 import sys
 import urllib.request
@@ -20,6 +21,13 @@ try:
     NLTK_AVAILABLE = True
 except ImportError:
     NLTK_AVAILABLE = False
+
+try:
+    import numpy as np
+
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
 
 # Constants for query generation
 ALPHABET = "abcdefghijklmnopqrstuvwxyz"
@@ -372,6 +380,12 @@ def apply_transforms(
             )
             content = ""
 
+        elif ttype == "vector":
+            # Vector fields generate NPY files, not CSV content
+            # This transform marks the field but returns empty content
+            # Actual NPY generation happens in generate_npy_file()
+            content = ""
+
     return content[:field_size]
 
 
@@ -459,10 +473,128 @@ def generate_stemmable_dataset(
     return output
 
 
+def generate_npy_file(
+    output_dir: Path, filename: str, doc_count: int, dimensions: int
+) -> Path:
+    """Generate simple NPY file with random normalized vectors (vectors only)."""
+    if not NUMPY_AVAILABLE:
+        logging.error(f"numpy not installed. Cannot generate {filename}")
+        logging.error("Run: pip install numpy")
+        return None
+
+    output = output_dir / filename
+    if output.exists():
+        logging.info(f"Exists: {filename}")
+        return output
+
+    logging.info(
+        f"Generating {filename} ({doc_count} vectors × {dimensions} dimensions)"
+    )
+
+    # Generate random normalized vectors
+    vectors = np.random.randn(doc_count, dimensions).astype(np.float32)
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    vectors = vectors / norms
+
+    np.save(output, vectors)
+    logging.info(f"Complete: {filename}")
+    return output
+
+
+def generate_structured_npy(output_dir: Path, filename: str, config: dict) -> Path:
+    """Generate structured NPY with multiple fields including vectors."""
+    if not NUMPY_AVAILABLE:
+        logging.error(f"numpy not installed. Cannot generate {filename}")
+        logging.error("Run: pip install numpy")
+        return None
+
+    output = output_dir / filename
+    if output.exists():
+        logging.info(f"Exists: {filename}")
+        return output
+
+    doc_count = config["doc_count"]
+    fields = config["fields"]
+
+    # Build structured dtype
+    dtype_list = []
+    for field in fields:
+        field_name = field["name"]
+        transforms = field.get("transforms", [])
+
+        for t in transforms:
+            ttype = t.get("type")
+            if ttype == "vector":
+                # Vector field
+                dims = t.get("dimensions", 256)
+                dtype_list.append((field_name, "f4", (dims,)))
+            elif ttype in ("proximity_phrase", "inject"):
+                # Text field - use ASCII bytes not Unicode
+                size = field.get("size", 50)
+                dtype_list.append((field_name, f"S{size}"))
+            elif ttype == "numeric_range":
+                # Numeric field - store as ASCII string so Valkey NUMERIC index can parse it
+                size = field.get("size", 15)
+                dtype_list.append((field_name, f"S{size}"))
+            elif ttype == "tag_list":
+                # Tag field (stored as ASCII bytes)
+                size = field.get("size", 30)
+                dtype_list.append((field_name, f"S{size}"))
+
+    if not dtype_list:
+        logging.error(f"No fields to generate for {filename}")
+        return None
+
+    logging.info(f"Generating {filename} ({doc_count} docs, {len(dtype_list)} fields)")
+
+    # Create structured array
+    data = np.zeros(doc_count, dtype=dtype_list)
+
+    # Fill each field
+    for field in fields:
+        field_name = field["name"]
+        for t in field.get("transforms", []):
+            ttype = t.get("type")
+
+            if ttype == "vector":
+                # Generate normalized vectors
+                dims = t.get("dimensions", 256)
+                vectors = np.random.randn(doc_count, dims).astype(np.float32)
+                norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+                data[field_name] = vectors / norms
+
+            elif ttype == "proximity_phrase":
+                # Generate text - store phrase{query_id} as a single searchable token
+                # With repeats=1000 and 100K docs, 100 unique phrases × 1000 docs each
+                # Query "phrase0" matches exactly 1000 docs → guaranteed 100% hit rate
+                repeats = t.get("repeats", 1000)
+                for i in range(doc_count):
+                    query_id = i // repeats
+                    data[field_name][i] = f"phrase{query_id}"
+
+            elif ttype == "numeric_range":
+                # Generate numbers as decimal strings so Valkey NUMERIC index can parse them
+                min_val = t.get("min", 0)
+                max_val = t.get("max", 1000)
+                prices = np.random.uniform(min_val, max_val, doc_count)
+                for i in range(doc_count):
+                    data[field_name][i] = f"{prices[i]:.2f}"
+
+            elif ttype == "tag_list":
+                # Generate tags
+                tags = t.get("tags", ["electronics", "books", "clothing"])
+                for i in range(doc_count):
+                    data[field_name][i] = np.random.choice(tags)
+
+    np.save(output, data)
+    logging.info(f"Complete: {filename}")
+    return output
+
+
 def generate_csv_dataset(
     output_dir: Path, config: dict, filename: str, wiki_file: Path = None
 ) -> Path:
-    """Generate CSV dataset with optional Wikipedia support."""
+    """Generate CSV or structured NPY dataset."""
     output = output_dir / filename
 
     if output.exists():
@@ -471,6 +603,17 @@ def generate_csv_dataset(
 
     doc_count = config["doc_count"]
     field_configs = build_field_configs(config)
+
+    # Check if any field has vector transform → use structured NPY instead of CSV
+    has_vector = any(
+        any(t.get("type") == "vector" for t in field.get("transforms", []))
+        for field in field_configs
+    )
+
+    if has_vector:
+        # Generate structured NPY with all fields (text + vector)
+        npy_filename = filename.replace(".csv", ".npy")
+        return generate_structured_npy(output_dir, npy_filename, config)
 
     # Check if any field needs Wikipedia
     needs_wiki = any(
@@ -699,6 +842,40 @@ def generate_queries(output_dir: Path, config: dict, filename: str) -> Path:
                 base_word = _generate_random_word(term_rng, min_length, max_length)
                 writer.writerow([base_word])
 
+        elif query_type == "vector":
+            # Generate structured NPY with search terms + query vectors
+            if not NUMPY_AVAILABLE:
+                logging.error("numpy not installed. Cannot generate vector queries")
+                return output
+
+            dimensions = config.get("dimensions", 256)
+            npy_filename = filename.replace(".csv", ".npy")
+            npy_path = output_dir / npy_filename
+
+            if not npy_path.exists():
+                logging.info(
+                    f"Generating {npy_filename} (structured: search_term + vector)"
+                )
+
+                # Create structured array for hybrid queries (ASCII bytes for text)
+                dtype = [("search_term", "S20"), ("query_vector", "f4", (dimensions,))]
+                data = np.zeros(num_queries, dtype=dtype)
+
+                # Fill fields - phrase{i} matches proximity_phrase dataset
+                # With repeats=1000 and 100K docs, each phrase{i} matches ~1000 docs (1%)
+                for i in range(num_queries):
+                    data["search_term"][i] = f"phrase{i}"
+                    vec = np.random.randn(dimensions).astype(np.float32)
+                    data["query_vector"][i] = vec / np.linalg.norm(vec)
+
+                np.save(npy_path, data)
+                logging.info(f"Complete: {npy_filename}")
+
+            # Still create CSV for compatibility (same phrase{i} terms)
+            writer.writerow(["search_term"])
+            for i in range(num_queries):
+                writer.writerow([f"phrase{i}"])
+
     logging.info(f"Complete: {filename} ({num_queries} queries)")
     return output
 
@@ -749,21 +926,26 @@ def main():
     wiki_file = download_wikipedia(args.output_dir) if needs_wiki else None
 
     for filename in files_to_gen:
-        if filename in dataset_configs:
-            if "stemmable" in filename and wiki_file:
+        # If a .npy file is requested, find its corresponding .csv config key
+        config_key = filename
+        if filename.endswith(".npy") and filename not in dataset_configs:
+            config_key = filename.replace(".npy", ".csv")
+
+        if config_key in dataset_configs:
+            if "stemmable" in config_key and wiki_file:
                 # Stemmable dataset - needs Wikipedia for word extraction
                 generate_stemmable_dataset(
-                    args.output_dir, wiki_file, dataset_configs[filename], filename
+                    args.output_dir, wiki_file, dataset_configs[config_key], config_key
                 )
-            elif filename.endswith(".csv"):
+            elif config_key.endswith(".csv"):
                 # CSV format - pass wiki_file if needed
                 generate_csv_dataset(
-                    args.output_dir, dataset_configs[filename], filename, wiki_file
+                    args.output_dir, dataset_configs[config_key], config_key, wiki_file
                 )
             elif wiki_file:
                 # XML format - needs Wikipedia
                 generate_dataset(
-                    args.output_dir, wiki_file, dataset_configs[filename], filename
+                    args.output_dir, wiki_file, dataset_configs[config_key], config_key
                 )
 
     # Generate query CSVs
