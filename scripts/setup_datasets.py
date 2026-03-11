@@ -842,6 +842,15 @@ def generate_queries(output_dir: Path, config: dict, filename: str) -> Path:
                 base_word = _generate_random_word(term_rng, min_length, max_length)
                 writer.writerow([base_word])
 
+        elif query_type == "tag_only":
+            # Generate tag-only queries for composed TAG filter tests
+            tags = config.get(
+                "tags", ["electronics", "books", "clothing", "food", "sports"]
+            )
+            writer.writerow(["category"])
+            for i in range(num_queries):
+                writer.writerow([tags[i % len(tags)]])
+
         elif query_type == "vector":
             # Generate structured NPY with search terms + query vectors
             if not NUMPY_AVAILABLE:
