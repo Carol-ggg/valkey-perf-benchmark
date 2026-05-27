@@ -760,11 +760,16 @@ class ClientRunner:
         command: str,
         timestamp: str,
         config_set: dict,
+        description: str = "",
     ) -> dict:
         """Create failure marker dict for failed scenarios."""
         return {
             "test_id": f"{group_id}_{scenario_id}",
             "test_phase": scenario_type,
+            "group": group_id,
+            "scenario": scenario_id,
+            "scenario_type": scenario_type,
+            "description": description,
             "status": "failed",
             "error": error,
             "command": command,
@@ -916,6 +921,7 @@ class ClientRunner:
                         scenario["command"],
                         commit_time,
                         config_set,
+                        scenario.get("description", ""),
                     )
                 return None
 
@@ -945,6 +951,11 @@ class ClientRunner:
                     metrics["status"] = "success"
                     metrics["test_id"] = f"{group_id}_{scenario_id}"
                     metrics["test_phase"] = scenario_type
+                    metrics["group"] = group_id
+                    metrics["scenario"] = scenario_id
+                    metrics["scenario_type"] = scenario_type
+                    if scenario.get("description"):
+                        metrics["description"] = scenario["description"]
                     metrics["config_set"] = config_set
                     if scenario.get("dataset"):
                         metrics["dataset"] = scenario["dataset"]
@@ -961,6 +972,7 @@ class ClientRunner:
                     scenario["command"],
                     commit_time,
                     config_set,
+                    scenario.get("description", ""),
                 )
 
         return None
