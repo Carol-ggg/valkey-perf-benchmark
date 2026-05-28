@@ -17,16 +17,17 @@
 SELECT 'CREATE DATABASE grafana' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'grafana')\gexec
 SELECT 'CREATE DATABASE postgres' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'postgres')\gexec
 
--- Create password-auth user for GitHub Actions
--- IMPORTANT: replace 'CHANGE_ME' with the password you'll store in the
--- PG_PASSWORD GitHub Actions secret. Keep this file out of git after editing.
+-- Create password-auth user for GitHub Actions.
+-- This password must match the PG_PASSWORD GitHub Actions secret in the repo.
+-- Keep this file out of git after editing (do not commit the real password).
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_user WHERE usename = 'github_actions') THEN
-    CREATE USER github_actions WITH LOGIN PASSWORD 'CHANGE_ME';
+    CREATE USER github_actions WITH LOGIN PASSWORD 'valkey-search';
     RAISE NOTICE 'Created user: github_actions';
   ELSE
-    RAISE NOTICE 'User github_actions already exists';
+    ALTER USER github_actions WITH PASSWORD 'valkey-search';
+    RAISE NOTICE 'User github_actions already exists; password updated';
   END IF;
 END
 $$;

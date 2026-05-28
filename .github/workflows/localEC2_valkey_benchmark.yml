@@ -25,7 +25,7 @@ on:
 # - group: All workflow runs share the same concurrency group
 # - cancel-in-progress: false: Queue new runs instead of canceling existing ones
 concurrency:
-  group: ec2-al-2023-benchmarking-arm64
+  group: benchmark-test
   cancel-in-progress: false
 
 defaults:
@@ -45,7 +45,7 @@ jobs:
       BRANCH: unstable
       MAX_COMMITS: ${{ inputs.max_commits || '1' }}
       NUM_RUN: ${{ inputs.num_runs || '5' }}
-    runs-on: [self-hosted, ec2-al-2023-benchmarking-arm64]
+    runs-on: [self-hosted, benchmark-test]
     timeout-minutes: 7200
     steps:
       - name: Set up Python
@@ -100,7 +100,7 @@ jobs:
             echo "Determining commits to benchmark..."
             PGPASSWORD="${{ secrets.PG_PASSWORD }}"
 
-            CONFIG_FILE="./configs/benchmark-config-arm.json"
+            CONFIG_FILE="./configs/benchmark-config-arm-smoke.json"
             commits=$(python utils/postgres_track_commits.py determine \
               --host 127.0.0.1 \
               --port 5432 \
@@ -123,7 +123,7 @@ jobs:
         run: |
           PGPASSWORD="${{ secrets.PG_PASSWORD }}"
           COMMIT_IDS="${{ steps.determine_commits.outputs.commit_ids }}"
-          CONFIG_FILE="./configs/benchmark-config-arm.json"
+          CONFIG_FILE="./configs/benchmark-config-arm-smoke.json"
           python utils/postgres_track_commits.py mark \
             --host 127.0.0.1 \
             --port 5432 \
@@ -168,7 +168,7 @@ jobs:
           echo "===== BENCHMARKING ${{ steps.determine_commits.outputs.commit_ids }} ====="
           python ./benchmark.py \
             --commits ${{ steps.determine_commits.outputs.commit_ids }} \
-            --config ./configs/benchmark-config-arm.json \
+            --config ./configs/benchmark-config-arm-smoke.json \
             --valkey-benchmark-path "$VALKEY_BENCHMARK_PATH" \
             --target-ip ${{ secrets.EC2_ARM64_IP }} \
             --results-dir "results" \
@@ -216,7 +216,7 @@ jobs:
         run: |
           PGPASSWORD="${{ secrets.PG_PASSWORD }}"
           COMMIT_IDS="${{ steps.determine_commits.outputs.commit_ids }}"
-          CONFIG_FILE="./configs/benchmark-config-arm.json"
+          CONFIG_FILE="./configs/benchmark-config-arm-smoke.json"
           python utils/postgres_track_commits.py mark \
             --host 127.0.0.1 \
             --port 5432 \
