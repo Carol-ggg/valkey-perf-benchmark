@@ -1,0 +1,236 @@
+name: Carol Valkey Continuous Benchmark (local Postgres)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_commits:
+        description: "Maximum number of commits to benchmark"
+        required: false
+        default: "1"
+        type: string
+      num_runs:
+        description: "Number of runs to benchmark"
+        required: false
+        default: "1"
+        type: string
+      commits:
+        description: "List of commits to benchmark"
+        required: false
+        default: ""
+        type: string
+  schedule:
+    - cron: "0 */8 * * *"
+
+# Prevent concurrent workflow runs to avoid conflicts and resource contention
+# - group: All workflow runs share the same concurrency group
+# - cancel-in-progress: false: Queue new runs instead of canceling existing ones
+concurrency:
+  group: ec2-al-2023-benchmarking-arm64
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: "bash -Eeuo pipefail -x {0}"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  benchmarking-manual-commits: ${{ github.event_name == 'workflow_dispatch' && inputs.commits || 'false' }}
+
+jobs:
+  valkey_continuous_benchmark:
+    env:
+      BRANCH: unstable
+      MAX_COMMITS: ${{ inputs.max_commits || '1' }}
+      NUM_RUN: ${{ inputs.num_runs || '5' }}
+    runs-on: [self-hosted, ec2-al-2023-benchmarking-arm64]
+    timeout-minutes: 7200
+    steps:
+      - name: Set up Python
+        uses: kishaningithub/setup-python-amazon-linux@63dc7bd642c6a564d0a93dd4b1cbe3e448ce3621
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Checkout Valkey
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: valkey-io/valkey
+          ref: ${{ env.BRANCH }}
+          fetch-depth: 0
+          path: valkey
+
+      - name: Checkout Valkey Benchmark
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          path: valkey-perf-benchmark
+
+      - name: Install dependencies
+        working-directory: valkey-perf-benchmark
+        run: |
+          sudo dnf groupinstall "Development Tools" -y
+          sudo dnf install -y gcc gcc-c++ make python3-devel openssl-devel bzip2-devel libffi-devel
+          pip install -r requirements.txt
+
+      # AWS creds no longer needed for RDS IAM auth; kept commented in case S3 upload is re-enabled.
+      # - name: Configure AWS credentials
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     aws-region: ${{ secrets.AWS_REGION }}
+      #     role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Cleanup incomplete commits from previous runs
+        working-directory: valkey-perf-benchmark
+        run: |
+          PGPASSWORD="${{ secrets.PG_PASSWORD }}"
+          python utils/postgres_track_commits.py cleanup \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --database ${{ secrets.PG_DATABASE }} \
+            --username ${{ secrets.PG_USERNAME }} \
+            --password "$PGPASSWORD"
+
+      - name: Determine commits to benchmark
+        id: determine_commits
+        working-directory: valkey-perf-benchmark
+        run: |
+          if [ "${{ env.benchmarking-manual-commits }}" == "false" ]; then
+            echo "Determining commits to benchmark..."
+            PGPASSWORD="${{ secrets.PG_PASSWORD }}"
+
+            CONFIG_FILE="./configs/benchmark-config-arm.json"
+            commits=$(python utils/postgres_track_commits.py determine \
+              --host 127.0.0.1 \
+              --port 5432 \
+              --database ${{ secrets.PG_DATABASE }} \
+              --username ${{ secrets.PG_USERNAME }} \
+              --password "$PGPASSWORD" \
+              --repo ../valkey \
+              --branch "$BRANCH" \
+              --max-commits "$MAX_COMMITS" \
+              --config-file "$CONFIG_FILE")
+          else
+            echo "Using manual commits..."
+            commits="${{ inputs.commits }}"
+          fi
+
+          echo "commit_ids=$commits" >> "$GITHUB_OUTPUT"
+
+      - name: Mark commits as in progress
+        working-directory: valkey-perf-benchmark
+        run: |
+          PGPASSWORD="${{ secrets.PG_PASSWORD }}"
+          COMMIT_IDS="${{ steps.determine_commits.outputs.commit_ids }}"
+          CONFIG_FILE="./configs/benchmark-config-arm.json"
+          python utils/postgres_track_commits.py mark \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --database ${{ secrets.PG_DATABASE }} \
+            --username ${{ secrets.PG_USERNAME }} \
+            --password "$PGPASSWORD" \
+            --repo ../valkey \
+            --status in_progress \
+            --config-file "$CONFIG_FILE" \
+            $COMMIT_IDS
+
+      - name: Checkout valkey to build latest benchmark.
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          repository: valkey-io/valkey
+          ref: "unstable"
+          path: valkey_latest
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build latest valkey_latest
+        working-directory: valkey_latest
+        run: |
+          echo "Building latest valkey-benchmark for latest benchmark executable..."
+          make distclean || true
+          make -j$(nproc)
+          if [[ -f "src/valkey-benchmark" ]]; then
+            echo "Successfully built latest valkey-benchmark"
+            ls -la src/valkey-benchmark
+            ./src/valkey-benchmark --version || echo "Version check completed"
+          else
+            echo "Failed to build valkey-benchmark"
+            exit 1
+          fi
+          VALKEY_BENCHMARK_PATH="$(pwd)/src/valkey-benchmark"
+          echo "VALKEY_BENCHMARK_PATH=$VALKEY_BENCHMARK_PATH" >> $GITHUB_ENV
+          echo "Latest valkey-benchmark path: $VALKEY_BENCHMARK_PATH"
+
+      - name: benchmark_commits
+        working-directory: valkey-perf-benchmark
+        run: |
+          echo "===== BENCHMARKING ${{ steps.determine_commits.outputs.commit_ids }} ====="
+          python ./benchmark.py \
+            --commits ${{ steps.determine_commits.outputs.commit_ids }} \
+            --config ./configs/benchmark-config-arm.json \
+            --valkey-benchmark-path "$VALKEY_BENCHMARK_PATH" \
+            --target-ip ${{ secrets.EC2_ARM64_IP }} \
+            --results-dir "results" \
+            --runs $NUM_RUN
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: valkey-perf-benchmark/results
+
+      # S3 upload disabled for local-Postgres run; uncomment if you want artifacts mirrored to S3.
+      # - name: Re-auth with AWS credentials
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     aws-region: ${{ secrets.AWS_REGION }}
+      #     role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+      #
+      # - name: Upload metrics to S3
+      #   env:
+      #     COMMITS: ${{ steps.determine_commits.outputs.commit_ids }}
+      #   run: |
+      #     ROOT_DIR="valkey-perf-benchmark/results"
+      #     for sha in $COMMITS; do
+      #       echo "Uploading metrics for $sha"
+      #       aws s3 cp "$ROOT_DIR/$sha/metrics.json" \
+      #         "s3://${{ secrets.AWS_S3_BUCKET }}/results/$sha/metrics.json"
+      #     done
+
+      - name: Push metrics to PostgreSQL
+        working-directory: valkey-perf-benchmark
+        run: |
+          PGPASSWORD="${{ secrets.PG_PASSWORD }}"
+          python utils/push_to_postgres.py \
+            --results-dir ./results \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --database ${{ secrets.PG_DATABASE }} \
+            --username ${{ secrets.PG_USERNAME }} \
+            --password "$PGPASSWORD" \
+            --table-name "benchmark_metrics"
+
+      - name: Mark commits as complete after successful PostgreSQL push
+        working-directory: valkey-perf-benchmark
+        run: |
+          PGPASSWORD="${{ secrets.PG_PASSWORD }}"
+          COMMIT_IDS="${{ steps.determine_commits.outputs.commit_ids }}"
+          CONFIG_FILE="./configs/benchmark-config-arm.json"
+          python utils/postgres_track_commits.py mark \
+            --host 127.0.0.1 \
+            --port 5432 \
+            --database ${{ secrets.PG_DATABASE }} \
+            --username ${{ secrets.PG_USERNAME }} \
+            --password "$PGPASSWORD" \
+            --repo ../valkey \
+            --status complete \
+            --config-file "$CONFIG_FILE" \
+            $COMMIT_IDS
+
+      - name: Cleanup any running valkey processes and files
+        if: always()
+        continue-on-error: true
+        run: |
+          pkill -f valkey || echo "No valkey processes found to kill"
+          rm -rf *
