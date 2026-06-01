@@ -23,10 +23,10 @@ SELECT 'CREATE DATABASE postgres' WHERE NOT EXISTS (SELECT FROM pg_database WHER
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_user WHERE usename = 'github_actions') THEN
-    CREATE USER github_actions WITH LOGIN PASSWORD 'change_me';
+    CREATE USER github_actions WITH LOGIN PASSWORD 'valkey-search';
     RAISE NOTICE 'Created user: github_actions';
   ELSE
-    ALTER USER github_actions WITH PASSWORD 'change_me';
+    ALTER USER github_actions WITH PASSWORD 'valkey-search';
     RAISE NOTICE 'User github_actions already exists; password updated';
   END IF;
 END
