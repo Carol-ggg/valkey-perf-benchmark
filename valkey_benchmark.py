@@ -401,9 +401,7 @@ class ClientRunner:
                 )
                 continue
 
-            logging.info(
-                f"=== Group {group_id}: {group_description or ''} ==="
-            )
+            logging.info(f"=== Group {group_id}: {group_description or ''} ===")
 
             for scenario in test_group.get("scenarios", []):
                 # Expand scenario options (e.g., with/without flags)
@@ -754,7 +752,6 @@ class ClientRunner:
 
         return scenarios
 
-
     def _create_failure_marker(
         self,
         group_id: int,
@@ -954,7 +951,6 @@ class ClientRunner:
                     metrics["test_phase"] = scenario_type
                     metrics["group"] = group_id
                     metrics["scenario"] = scenario_id
-                    metrics["scenario_type"] = scenario_type
                     if group_description:
                         metrics["group_description"] = group_description
                     if scenario.get("description"):

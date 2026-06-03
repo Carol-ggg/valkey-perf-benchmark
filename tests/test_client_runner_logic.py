@@ -388,9 +388,7 @@ class TestIterateTestGroupsScenarios:
                 {
                     "group": 1,
                     "description": "small payload latency",
-                    "scenarios": [
-                        {"id": "s1", "command": "GET", "type": "read"}
-                    ],
+                    "scenarios": [{"id": "s1", "command": "GET", "type": "read"}],
                 }
             ],
         )
@@ -407,9 +405,7 @@ class TestIterateTestGroupsScenarios:
             [
                 {
                     "group": 2,
-                    "scenarios": [
-                        {"id": "s1", "command": "SET", "type": "write"}
-                    ],
+                    "scenarios": [{"id": "s1", "command": "SET", "type": "write"}],
                 }
             ],
         )
