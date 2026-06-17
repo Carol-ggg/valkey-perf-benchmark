@@ -17,6 +17,7 @@ import valkey
 from process_metrics import MetricsProcessor
 from valkey_server import ServerLauncher
 from profiler import PerformanceProfiler
+from utils.git_utils import resolve_ref, get_commit_timestamp
 
 # Constants
 VALKEY_BENCHMARK = "src/valkey-benchmark"
@@ -25,7 +26,7 @@ DEFAULT_TIMEOUT = 30
 DEFAULT_SOCKET_TIMEOUT = 10
 
 # Supported Valkey benchmark commands
-READ_COMMANDS = ["GET", "MGET", "LRANGE", "SPOP", "ZPOPMIN", "XRANGE"]
+READ_COMMANDS = ["GET", "MGET", "LRANGE", "SISMEMBER", "ZSCORE", "ZRANGE"]
 WRITE_COMMANDS = [
     "SET",
     "MSET",
@@ -38,6 +39,8 @@ WRITE_COMMANDS = [
     "HSET",
     "ZADD",
     "XADD",
+    "SPOP",
+    "ZPOPMIN",
 ]
 
 # Map for read commands to populate equivalents
@@ -45,8 +48,9 @@ READ_POPULATE_MAP = {
     "GET": "SET",
     "MGET": "MSET",
     "LRANGE": "LPUSH",
-    "SPOP": "SADD",
-    "ZPOPMIN": "ZADD",
+    "SISMEMBER": "SADD",
+    "ZSCORE": "ZADD",
+    "ZRANGE": "ZADD",
 }
 
 
@@ -81,6 +85,8 @@ class ClientRunner:
         server_launcher: Optional[ServerLauncher] = None,
         architecture: Optional[str] = None,
         uses_test_groups: bool = False,
+        repository: Optional[str] = None,
+        config_name: Optional[str] = None,
     ) -> None:
         self.commit_id = commit_id
         self.config = config
@@ -97,6 +103,8 @@ class ClientRunner:
         self.server_launcher = server_launcher
         self.architecture = architecture
         self.uses_test_groups = uses_test_groups
+        self.repository = repository
+        self.config_name = config_name
         self.current_profiling_set = {"enabled": False}
         self.current_config_set = {}
         self.config_suffix = "default"
@@ -211,14 +219,8 @@ class ClientRunner:
     def get_commit_time(self, commit_id: str) -> str:
         """Return timestamp for a commit."""
         try:
-            result = self._run(
-                ["git", "show", "-s", "--format=%cI", commit_id],
-                cwd=self.valkey_path,
-                capture_output=True,
-            )
-            if result is None:
-                raise RuntimeError("Failed to get commit time: no result returned")
-            return result.stdout.strip()
+            sha = resolve_ref(commit_id, self.valkey_path)
+            return get_commit_timestamp(sha, self.valkey_path)
         except Exception as e:
             logging.exception(f"Failed to get commit time for {commit_id}: {e}")
             raise
@@ -228,6 +230,14 @@ class ClientRunner:
         if self.cluster_mode and "cluster_ports" in self.config:
             return self.config["cluster_ports"]
         return [self.config.get("port", 6379)]
+
+    def _should_add_cluster_flag(self, scenario: Optional[dict] = None) -> bool:
+        """Return whether the valkey-benchmark command should include --cluster."""
+        if not self.cluster_mode:
+            return False
+        if scenario is None:
+            return True
+        return scenario.get("cluster_execution", "single") == "single"
 
     def _flush_database(self) -> None:
         """Flush all data from the database before benchmark runs."""
@@ -391,6 +401,7 @@ class ClientRunner:
 
         for test_group in self.config.get("test_groups", []):
             group_id = test_group.get("group", "unknown")
+            group_description = test_group.get("description")
 
             # Skip filtered groups
             if groups_to_run and group_id not in groups_to_run:
@@ -399,9 +410,7 @@ class ClientRunner:
                 )
                 continue
 
-            logging.info(
-                f"=== Group {group_id}: {test_group.get('description', '')} ==="
-            )
+            logging.info(f"=== Group {group_id}: {group_description or ''} ===")
 
             for scenario in test_group.get("scenarios", []):
                 # Expand scenario options (e.g., with/without flags)
@@ -420,6 +429,7 @@ class ClientRunner:
                         "format": "test_groups",
                         "scenario": expanded_scenario,
                         "group_id": group_id,
+                        "group_description": group_description,
                         "config_set": self.current_config_set,
                         "config_suffix": self.config_suffix,
                     }
@@ -544,6 +554,7 @@ class ClientRunner:
             commit_time,
             data["config_set"],
             data["config_suffix"],
+            data.get("group_description"),
         )
 
     def _generate_combinations(self) -> List[tuple]:
@@ -657,9 +668,8 @@ class ClientRunner:
             if scenario.get("sequential", False):
                 cmd += ["--sequential"]
 
-            if scenario.get("cluster_execution") == "single":
-                if self.cluster_mode and self.config.get("cluster_nodes"):
-                    cmd += ["--cluster"]
+            if self._should_add_cluster_flag(scenario):
+                cmd += ["--cluster"]
 
             # Seed: Default ON unless explicitly disabled with "seed": false
             if (
@@ -693,6 +703,9 @@ class ClientRunner:
 
             if sequential:
                 cmd += ["--sequential"]
+
+            if self._should_add_cluster_flag():
+                cmd += ["--cluster"]
 
             # Unified seed logic: Default ON unless config disables
             if self.config.get("seed") is not False:
@@ -770,6 +783,8 @@ class ClientRunner:
         return {
             "test_id": f"{group_id}_{scenario_id}",
             "test_phase": scenario_type,
+            "group": group_id,
+            "scenario": scenario_id,
             "status": "failed",
             "error": error,
             "command": command,
@@ -800,6 +815,7 @@ class ClientRunner:
                 self.io_threads,
                 self.benchmark_threads,
                 self.architecture,
+                self.repository,
             )
 
         return profiler, metrics_processor, profiling_enabled
@@ -828,6 +844,7 @@ class ClientRunner:
         commit_time,
         config_set,
         config_suffix,
+        group_description=None,
     ):
         """Run a single scenario."""
         scenario_type = scenario.get("type", "test")
@@ -971,7 +988,15 @@ class ClientRunner:
                     metrics["status"] = "success"
                     metrics["test_id"] = f"{group_id}_{scenario_id}"
                     metrics["test_phase"] = scenario_type
+                    metrics["group"] = group_id
+                    metrics["scenario"] = scenario_id
+                    if group_description:
+                        metrics["group_description"] = group_description
+                    if scenario.get("description"):
+                        metrics["scenario_description"] = scenario["description"]
                     metrics["config_set"] = config_set
+                    if self.config_name:
+                        metrics["config_name"] = self.config_name
                     if scenario.get("dataset"):
                         metrics["dataset"] = scenario["dataset"]
                     if scenario.get("description"):

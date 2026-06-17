@@ -16,7 +16,8 @@ from psycopg2.extras import Json
 def create_tables(conn):
     """Create benchmark tracking tables if they don't exist."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS benchmark_commits (
                 id SERIAL PRIMARY KEY,
                 sha VARCHAR(40) NOT NULL,
@@ -37,15 +38,21 @@ def create_tables(conn):
             CREATE INDEX IF NOT EXISTS idx_commits_timestamp ON benchmark_commits(timestamp);
             CREATE INDEX IF NOT EXISTS idx_commits_config ON benchmark_commits USING GIN(config);
             CREATE INDEX IF NOT EXISTS idx_commits_sha_status ON benchmark_commits(sha, status);
-        """)
+        """
+        )
     conn.commit()
     print("Created/verified benchmark_commits table", file=sys.stderr)
 
 
-def _git_rev_list(repo: Path, branch: str) -> List[str]:
+def _git_rev_list(
+    repo: Path, branch: str, max_count: Optional[int] = None
+) -> List[str]:
     """Get list of commit SHAs from git."""
+    cmd = ["git", "rev-list", branch]
+    if max_count:
+        cmd.extend(["--max-count", str(max_count)])
     proc = subprocess.run(
-        ["git", "rev-list", branch],
+        cmd,
         cwd=repo,
         capture_output=True,
         text=True,
@@ -135,11 +142,13 @@ def cleanup_incomplete_commits(conn) -> int:
     create_tables(conn)
 
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             DELETE FROM benchmark_commits 
             WHERE status = 'in_progress'
             RETURNING id
-        """)
+        """
+        )
         count = cur.rowcount
 
     conn.commit()
@@ -432,10 +441,12 @@ def get_unique_configs(conn) -> List[dict]:
     create_tables(conn)
 
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT DISTINCT config
             FROM benchmark_commits
-        """)
+        """
+        )
         return [row[0] for row in cur.fetchall()]
 
 
@@ -521,7 +532,7 @@ def main():
             user=args.username,
             password=args.password,
             connect_timeout=30,
-            sslmode="require",
+            sslmode="prefer",
         )
         print(f"Connected to PostgreSQL at {args.host}:{args.port}", file=sys.stderr)
     except Exception as err:

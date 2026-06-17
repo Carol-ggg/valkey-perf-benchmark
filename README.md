@@ -23,7 +23,31 @@ A benchmarking tool for [Valkey](https://github.com/valkey-io/valkey), an in-mem
 - Python 3.6+
 - Linux environment (for taskset CPU pinning)
 - Build tools required by Valkey (gcc, make, etc.)
-- Install python modules required for this project: `pip install -r requirements.txt`
+
+### Development Setup
+
+Use a virtual environment for development:
+
+```bash
+# Create and activate venv
+python3 -m venv venv
+. venv/bin/activate
+
+# Install dependencies
+pip install --require-hashes -r requirements.txt
+
+# Install pip-tools for dependency management
+pip install pip-tools
+```
+
+### Updating Dependencies
+
+To update dependencies, edit `requirements.in` and regenerate the lock file:
+
+```bash
+. venv/bin/activate
+pip-compile --generate-hashes requirements.in -o requirements.txt
+```
 
 ### Additional Prerequisites for FTS Tests
 
@@ -61,6 +85,9 @@ valkey-perf-benchmark/
 ├── profiler.py              # Generic performance profiler (flamegraphs)
 ├── cpu_monitor.py           # Generic CPU monitoring
 ├── process_metrics.py       # Processes and formats benchmark results
+├── tests/                   # Test suite
+│   ├── integration/        # Integration tests
+│   └── test_*.py           # Unit tests (pytest)
 ├── scripts/                 # Helper scripts
 │   ├── setup_datasets.py   # FTS dataset generator
 │   ├── flamegraph.pl       # Flamegraph visualization
@@ -69,7 +96,8 @@ valkey-perf-benchmark/
 │   ├── field_explosion_50k.xml
 │   ├── search_terms.csv
 │   └── proximity_phrases.csv
-└── requirements.txt         # Python dependencies
+├── requirements.in          # Direct dependencies (human-editable)
+└── requirements.txt         # Locked dependencies with hashes (auto-generated, includes test deps)
 ```
 
 Each benchmark run clones a fresh copy of the Valkey repository for the target commit. When `--valkey-path` is omitted, the repository is cloned into `valkey_<commit>` and removed after the run to maintain build isolation and repeatability.
@@ -225,9 +253,33 @@ Create benchmark configurations in JSON format. Each object represents a single 
     "warmup": 10,
     "io-threads": [1, 4, 8],
     "server_cpu_range": "0-1",
-    "client_cpu_range": "2-3"
+    "client_cpu_range": "2-3",
+    "custom-server-configs": {
+      "maxmemory": "4gb",
+      "timeout": "300"
+    }
   }
 ]
+```
+
+#### Custom Server Configs Examples
+
+Add server configs the benchmark does not manage (e.g. memory limits, timeouts):
+```json
+"custom-server-configs": {
+  "maxmemory": "4gb",
+  "timeout": "300",
+  "maxclients": "10000"
+}
+```
+
+Combine with a baseline `.conf` file:
+```json
+"custom-server-config-file": "/etc/valkey/baseline.conf",
+"custom-server-configs": {
+  "hz": "100",
+  "tcp-keepalive": "60"
+}
 ````
 
 ### Configuration Parameters
@@ -246,6 +298,18 @@ Create benchmark configurations in JSON format. Each object represents a single 
 | `io-threads`       | Number of I/O threads for server                               | Integer             | Yes             |
 | `server_cpu_range` | CPU cores for server (e.g. "0-3", "0,2,4", or "144-191,48-95") | String              | No              |
 | `client_cpu_range` | CPU cores for client (e.g. "4-7", "1,3,5", or "0-3,8-11")      | String              | No              |
+| `custom-server-configs` | Additional server configuration options the benchmark does not manage (e.g. `{"maxmemory": "4gb", "timeout": "300"}`). | Object (key-value pairs) | No |
+| `custom-server-config-file` | Path to a Valkey-format `.conf` file passed positionally to `valkey-server`. Used as a baseline configuration. | String (path) | No |
+
+**Note on `custom-server-configs`**: This field lets you pass *additional* configuration options to the Valkey server at startup — settings the benchmark itself does not manage (e.g. `maxmemory`, `timeout`, `maxclients`, `tcp-keepalive`, `hz`).
+
+**Precedence**: Configs are applied in this order on the `valkey-server` command line:
+
+1. `custom-server-config-file` (positional, parsed first — lowest priority)
+2. `custom-server-configs` (`--key value` flags)
+3. Benchmark-managed defaults (`--key value` flags — highest priority via Valkey's last-wins semantics)
+
+This means harness-critical settings (`port`, `daemonize`, `logfile`, `cluster-*`, etc.) always take effect regardless of what the user supplies. Setting them in `custom-server-configs` is allowed but has no effect.
 
 When `warmup` is provided for read commands, the benchmark performs three stages:
 
@@ -376,6 +440,42 @@ For local development, simply run:
 ```bash
 python benchmark.py
 ```
+
+Code formatting is enforced by CI using black. To format locally:
+```bash
+pip install black==25.1.0
+black .
+```
+
+### Running Tests
+
+The project includes a comprehensive test suite:
+
+- **Unit tests**: Cover core logic functions (parsing, validation, statistics, metrics processing)
+- **Integration tests**: Validate benchmark workflows with mock components
+
+Tests run without requiring a Valkey server or PostgreSQL.
+
+```bash
+# Install dependencies (includes test deps)
+pip install --require-hashes -r requirements.txt
+
+# Run all tests
+python -m pytest tests/ -v
+
+# Run only unit tests
+python -m pytest tests/ -v --ignore=tests/integration/
+
+# Run only integration tests
+python -m pytest tests/integration/ -v
+
+# Run tests excluding slow tests
+python -m pytest tests/ -v -m "not slow"
+```
+
+#### Integration Tests
+
+The integration tests (`tests/integration/`) validate benchmark workflows end-to-end using mock components — no Valkey server, database, or network required. See `tests/integration/README.md` for details.
 
 ### Adding New Configurations
 
