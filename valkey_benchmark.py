@@ -999,8 +999,6 @@ class ClientRunner:
                         metrics["config_name"] = self.config_name
                     if scenario.get("dataset"):
                         metrics["dataset"] = scenario["dataset"]
-                    if scenario.get("description"):
-                        metrics["description"] = scenario["description"]
                     if scenario.get("config_description"):
                         metrics["config_description"] = scenario["config_description"]
                     return metrics

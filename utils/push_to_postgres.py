@@ -19,6 +19,7 @@ import psycopg2
 from psycopg2 import sql
 from psycopg2.extras import execute_values
 
+COMMAND_MAX_LENGTH = 255
 DESCRIPTION_MAX_LENGTH = 500
 CONFIG_NAME_MAX_LENGTH = 50
 
@@ -79,10 +80,14 @@ def analyze_metrics_schema(metrics_data: List[Dict[str, Any]]) -> Dict[str, str]
 
     # Determine types for each field
     for field in sorted(all_fields):
-        if field == "timestamp":
+        if field == "description":
+            continue
+        elif field == "timestamp":
             schema[field] = "TIMESTAMPTZ NOT NULL"
-        elif field in ["commit", "command"]:
-            schema[field] = f"VARCHAR(255) NOT NULL"
+        elif field == "commit":
+            schema[field] = "VARCHAR(255) NOT NULL"
+        elif field == "command":
+            schema[field] = f"VARCHAR({COMMAND_MAX_LENGTH}) NOT NULL"
         elif field == "module_commit":
             schema[field] = "VARCHAR(255)"
         elif field == "config_set":
@@ -91,6 +96,8 @@ def analyze_metrics_schema(metrics_data: List[Dict[str, Any]]) -> Dict[str, str]
             schema[field] = f"VARCHAR({CONFIG_NAME_MAX_LENGTH})"
         elif field in ["group_description", "scenario_description"]:
             schema[field] = f"VARCHAR({DESCRIPTION_MAX_LENGTH})"
+        elif field in ["error", "dataset"]:
+            schema[field] = "TEXT"
         else:
             sample_value = field_samples.get(field)
             column_type = detect_field_type(sample_value)
@@ -268,6 +275,11 @@ def convert_metrics_to_rows(
                         row.append(None)
                 else:
                     row.append(None)
+            elif column == "command":
+                value = metric.get(column)
+                if isinstance(value, str) and len(value) > COMMAND_MAX_LENGTH:
+                    value = value[:COMMAND_MAX_LENGTH]
+                row.append(value)
             elif column in ["group_description", "scenario_description"]:
                 value = metric.get(column)
                 if isinstance(value, str) and len(value) > DESCRIPTION_MAX_LENGTH:
