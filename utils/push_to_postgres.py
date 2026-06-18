@@ -222,6 +222,42 @@ def create_indexes(cur, table_name: str) -> None:
         cur.execute(index_sql)
 
 
+def create_module_indexes(conn, table_name: str) -> None:
+    """Create module-specific indexes if the required columns exist."""
+    existing_columns = get_existing_columns(conn, table_name)
+
+    with conn.cursor() as cur:
+        # Composite index for dashboard time-series panels
+        # Equality filters first, then timestamp (range + ORDER BY) last
+        dashboard_cols = {"config_name", "architecture", "group_description", "config_set", "scenario", "timestamp"}
+        if dashboard_cols.issubset(existing_columns):
+            cur.execute(
+                sql.SQL(
+                    "CREATE INDEX IF NOT EXISTS {} ON {} (config_name, architecture, group_description, (config_set::text), scenario, timestamp)"
+                ).format(
+                    sql.Identifier(f"idx_{table_name}_dashboard"),
+                    sql.Identifier(table_name),
+                )
+            )
+            print(f"Created/verified index: idx_{table_name}_dashboard")
+
+        # Composite index for regression detection query
+        # Matches PARTITION BY + ORDER BY in the regression CTE
+        regression_cols = {"scenario", "group", "config_name", "architecture", "timestamp", "created_at"}
+        if regression_cols.issubset(existing_columns):
+            cur.execute(
+                sql.SQL(
+                    'CREATE INDEX IF NOT EXISTS {} ON {} (scenario, "group", config_name, architecture, timestamp DESC, created_at DESC)'
+                ).format(
+                    sql.Identifier(f"idx_{table_name}_regression"),
+                    sql.Identifier(table_name),
+                )
+            )
+            print(f"Created/verified index: idx_{table_name}_regression")
+
+    conn.commit()
+
+
 def convert_metrics_to_rows(
     metrics_data: List[Dict[str, Any]], column_order: List[str]
 ) -> Tuple[List[Tuple[Any, ...]], int]:
@@ -472,6 +508,11 @@ def main() -> None:
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be inserted"
     )
+    parser.add_argument(
+        "--create-module-indexes",
+        action="store_true",
+        help="Create module-specific composite indexes after insertion (for dashboard/regression queries)",
+    )
 
     args = parser.parse_args()
 
@@ -559,6 +600,11 @@ def main() -> None:
 
         status = "[DRY RUN] Would process" if args.dry_run else "Successfully processed"
         print(f"\n{status} {total_processed} total metrics")
+
+        if args.create_module_indexes and conn and not args.dry_run:
+            print("\nCreating module-specific indexes...")
+            create_module_indexes(conn, args.table_name)
+            print("Module indexes complete.")
 
     finally:
         if conn:
