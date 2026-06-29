@@ -1065,12 +1065,15 @@ class ClientRunner:
                     "test_id": test_id,
                     "test_phase": test_phase,
                     "group": group_id,
+                    "scenario": scenario.get("id"),
                     "config_set": config_set,
                     "status": "success",
                 }
             )
             if group_description:
                 m["group_description"] = group_description
+            if scenario.get("description"):
+                m["scenario_description"] = scenario["description"]
             if self.config_name:
                 m["config_name"] = self.config_name
             if cfg.get("dataset"):
