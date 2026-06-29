@@ -8,24 +8,35 @@ enabling 2D commit discovery across both valkey and module repositories.
 import argparse
 import json
 import platform
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
 import psycopg2
-from psycopg2.extras import Json
+from psycopg2.extras import Json, execute_values
 
 from datetime import datetime
 
-from postgres_track_commits import _git_rev_list, _git_commit_time
+from git_utils import git_rev_list_with_timestamps
 
 
 def _parse_timestamp(ts) -> datetime:
-    """Convert a timestamp (string or datetime) to a datetime object for comparison."""
+    """Convert a timestamp (string or datetime) to a timezone-aware datetime.
+
+    Raises ValueError if the result has no timezone info or input is malformed.
+    """
     if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            raise ValueError(f"Naive datetime not allowed (missing timezone): {ts}")
         return ts
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    if not isinstance(ts, str) or not ts.strip():
+        raise ValueError(f"Invalid timestamp: {ts!r}")
+    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        raise ValueError(f"Timestamp missing timezone: {ts!r}")
+    return dt
 
 
 @dataclass
@@ -62,12 +73,10 @@ class CommitPair:
         }
         missing = [k for k, v in required.items() if v is None or v == ""]
         if missing:
-            print(
-                f"FATAL: CommitPair missing required fields: {missing} "
-                f"(pair={self.core_sha}:{self.module_sha})",
-                file=sys.stderr,
+            raise ValueError(
+                f"CommitPair missing required fields: {missing} "
+                f"(pair={self.core_sha}:{self.module_sha})"
             )
-            sys.exit(1)
 
     def is_ready_to_insert(self) -> bool:
         """Check if all fields including status and priority are set."""
@@ -105,6 +114,8 @@ def get_config_name(config_file_path: str) -> str:
 
 def _module_table_name(module_name: str) -> str:
     """Return the tracking table name for a given module."""
+    if not re.match(r"^[a-z][a-z0-9_]{0,30}$", module_name):
+        raise ValueError(f"Invalid module_name: {module_name}")
     return f"benchmark_module_commits_{module_name}"
 
 
@@ -238,18 +249,16 @@ def _mark_subset_pairs_in_memory(
     # Get (sha, module_sha) pairs that are completed with a superset config
     completed_pairs = set()
     with conn.cursor() as cur:
-        for superset_cs in superset_list:
-            cur.execute(
-                f"""
-                SELECT sha, module_sha FROM {table}
-                WHERE status = 'completed'
-                  AND config_name = %s AND architecture = %s
-                  AND config_sets = %s
-            """,
-                (config_name, architecture, Json(superset_cs)),
-            )
-            for row in cur.fetchall():
-                completed_pairs.add((row[0], row[1]))
+        cur.execute(
+            f"""
+            SELECT sha, module_sha FROM {table}
+            WHERE status = 'completed'
+              AND config_name = %s AND architecture = %s
+              AND config_sets IN %s
+        """,
+            (config_name, architecture, tuple(Json(cs) for cs in superset_list)),
+        )
+        completed_pairs = {(row[0], row[1]) for row in cur.fetchall()}
 
     print(
         f"  Subset check: {len(completed_pairs)} completed pairs found from superset configs",
@@ -272,7 +281,7 @@ def _assign_priority_in_memory(
     pairs: List[CommitPair],
     table: str,
     config_name: str,
-    config_sets_json,
+    config_sets: List[dict],
     architecture: str,
 ) -> None:
     """Assign priority to pairs that are still pending (not subset-completed).
@@ -288,9 +297,10 @@ def _assign_priority_in_memory(
         pairs: List of CommitPair objects (modifies in-place)
         table: Table name
         config_name: Config file name
-        config_sets_json: Pre-wrapped Json for SQL
+        config_sets: List of module runtime configs
         architecture: Architecture
     """
+    config_sets_json = Json(config_sets)
     # Find pointer: max_commit_timestamp of the newest completed pair
     with conn.cursor() as cur:
         cur.execute(
@@ -348,7 +358,6 @@ def populate_module_commits(
     module_name: str,
     config_name: str,
     config_sets: List[dict],
-    config_sets_json,
     max_core_commits: Optional[int] = None,
     max_module_commits: Optional[int] = None,
 ) -> int:
@@ -372,13 +381,16 @@ def populate_module_commits(
     Returns:
         Number of new rows inserted
     """
-    _create_module_table(conn, module_name)
 
-    # Get commits from both git repos (newest first, limited if specified)
-    core_shas = _git_rev_list(repo, branch, max_count=max_core_commits)
-    module_shas = _git_rev_list(
+    # Get commits and timestamps from both repos in one subprocess each
+    core_timestamps = git_rev_list_with_timestamps(
+        repo, branch, max_count=max_core_commits
+    )
+    module_timestamps = git_rev_list_with_timestamps(
         module_repo, module_branch, max_count=max_module_commits
     )
+    core_shas = list(core_timestamps.keys())
+    module_shas = list(module_timestamps.keys())
     print(
         f"Scanned {len(core_shas)} core commits "
         f"(limited to most recent {max_core_commits}), "
@@ -386,10 +398,6 @@ def populate_module_commits(
         f"(limited to most recent {max_module_commits})",
         file=sys.stderr,
     )
-
-    # Cache timestamps — fetch once per unique SHA (avoids redundant subprocess calls)
-    core_timestamps = {sha: _git_commit_time(repo, sha) for sha in core_shas}
-    module_timestamps = {sha: _git_commit_time(module_repo, sha) for sha in module_shas}
     print(
         f"Cached {len(core_timestamps)} core + {len(module_timestamps)} module timestamps",
         file=sys.stderr,
@@ -397,6 +405,7 @@ def populate_module_commits(
 
     # Get existing (sha, module_sha) pairs for this config+arch to avoid redundant inserts
     table = _module_table_name(module_name)
+    config_sets_json = Json(config_sets)
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -448,22 +457,18 @@ def populate_module_commits(
 
     # Step 3: Assign priority in memory (for pairs not marked as subset)
     _assign_priority_in_memory(
-        conn, pairs, table, config_name, config_sets_json, architecture
+        conn, pairs, table, config_name, config_sets, architecture
     )
 
     # Step 4: Validate — all pairs must be ready before insert
     not_ready = [p for p in pairs if not p.is_ready_to_insert()]
     if not_ready:
-        print(
-            f"FATAL: {len(not_ready)} pairs not ready to insert "
-            f"(missing priority or status). Aborting.",
-            file=sys.stderr,
+        raise ValueError(
+            f"{len(not_ready)} pairs not ready to insert "
+            f"(missing priority or status). Aborting."
         )
-        sys.exit(1)
 
     # Step 5: Batch insert — single transaction, all or nothing
-    from psycopg2.extras import execute_values
-
     insert_sql = f"""
         INSERT INTO {table} (sha, module_sha, core_timestamp,
                              module_timestamp, max_commit_timestamp,
@@ -479,13 +484,11 @@ def populate_module_commits(
         conn.commit()
     except psycopg2.IntegrityError as e:
         conn.rollback()
-        print(
-            f"FATAL: Unexpected duplicate row during insert. "
+        raise ValueError(
+            f"Unexpected duplicate row during insert. "
             f"This should not happen — existing pairs were filtered beforehand. "
-            f"Error: {e}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+            f"Error: {e}"
+        ) from e
     print(
         f"Populated {table}: {len(pairs)} new pairs inserted "
         f"({len(core_shas)} core × {len(module_shas)} module commits)",
@@ -495,60 +498,11 @@ def populate_module_commits(
     return len(pairs)
 
 
-def check_incomplete_rows(
-    conn, module_name: str, config_name: str, config_sets_json, architecture: str
-) -> int:
-    """Check for rows with NULL values in required fields. Exit if found.
-
-    Required fields that must not be NULL: sha, module_sha, core_timestamp,
-    module_timestamp, max_commit_timestamp, min_commit_timestamp, status,
-    priority.
-
-    Called at start and end of workflow to catch any corrupt/incomplete state.
-
-    Args:
-        conn: PostgreSQL connection
-        module_name: Module name (determines table)
-        config_name: Config file name to scope
-        config_sets_json: Pre-wrapped Json(config_sets) for SQL queries
-        architecture: Architecture to scope
-
-    Returns:
-        Number of incomplete rows found (0 if clean)
-    """
-    _create_module_table(conn, module_name)
-    table = _module_table_name(module_name)
-
-    with conn.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT COUNT(*) FROM {table}
-            WHERE config_name = %s AND config_sets = %s AND architecture = %s
-              AND (sha IS NULL OR module_sha IS NULL OR core_timestamp IS NULL
-                   OR module_timestamp IS NULL OR max_commit_timestamp IS NULL
-                   OR min_commit_timestamp IS NULL OR status IS NULL
-                   OR priority IS NULL)
-        """,
-            (config_name, config_sets_json, architecture),
-        )
-        count = cur.fetchone()[0]
-
-    if count > 0:
-        print(
-            f"FATAL: {count} rows with NULL required fields found in {table}. Exiting.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    print(f"Integrity check passed: no incomplete rows in {table}", file=sys.stderr)
-    return count
-
-
 def fetch_next_module_commits(
     conn,
     module_name: str,
     config_name: str,
-    config_sets_json,
+    config_sets: List[dict],
     architecture: str,
     max_pairs: int = 1,
 ) -> List[str]:
@@ -568,20 +522,22 @@ def fetch_next_module_commits(
         conn: PostgreSQL connection
         module_name: Module name (determines table)
         config_name: Config file name to match
-        config_sets_json: Pre-wrapped Json(config_sets) for SQL queries
+        config_sets: List of module runtime configs
         architecture: Architecture to match
         max_pairs: Maximum number of pairs to fetch
 
     Returns:
-        List of 'core_sha:module_sha' strings marked as in_progress
+        Tuple of (pairs, max_timestamps) where:
+            pairs: List of 'core_sha:module_sha' strings marked as in_progress
+            max_timestamps: List of max_commit_timestamp ISO strings (same order)
     """
-    _create_module_table(conn, module_name)
     table = _module_table_name(module_name)
+    config_sets_json = Json(config_sets)
 
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            SELECT id, sha, module_sha FROM {table}
+            SELECT id, sha, module_sha, max_commit_timestamp FROM {table}
             WHERE status = 'pending'
               AND config_name = %s AND config_sets = %s AND architecture = %s
             ORDER BY created_at DESC, priority ASC,
@@ -594,10 +550,11 @@ def fetch_next_module_commits(
 
         if not rows:
             print("No pending pairs to fetch", file=sys.stderr)
-            return []
+            return [], []
 
         ids = [row[0] for row in rows]
         pairs = [f"{row[1]}:{row[2]}" for row in rows]
+        max_timestamps = [row[3].isoformat() for row in rows]
 
         # Mark selected pairs as in_progress
         cur.execute(
@@ -614,7 +571,7 @@ def fetch_next_module_commits(
         f"Fetched {len(pairs)} pairs from {table}: {' '.join(pairs)}",
         file=sys.stderr,
     )
-    return pairs
+    return pairs, max_timestamps
 
 
 def mark_module_commits(
@@ -622,7 +579,7 @@ def mark_module_commits(
     module_name: str,
     pairs: List[str],
     config_name: str,
-    config_sets_json,
+    config_sets: List[dict],
     architecture: str,
 ) -> int:
     """Mark specific pairs as completed.
@@ -635,14 +592,14 @@ def mark_module_commits(
         module_name: Module name (determines table)
         pairs: List of 'core_sha:module_sha' strings to mark complete
         config_name: Config file name to match
-        config_sets_json: Pre-wrapped Json(config_sets) for SQL queries
+        config_sets: List of module runtime configs
         architecture: Architecture to match
 
     Returns:
         Number of rows updated
     """
-    _create_module_table(conn, module_name)
     table = _module_table_name(module_name)
+    config_sets_json = Json(config_sets)
     updated = 0
 
     with conn.cursor() as cur:
@@ -679,7 +636,7 @@ def mark_module_commits(
 
 
 def cleanup_module_commits(
-    conn, module_name: str, config_name: str, config_sets_json, architecture: str
+    conn, module_name: str, config_name: str, config_sets: List[dict], architecture: str
 ) -> int:
     """Reset 'in_progress' entries back to 'pending' for a specific config+config_sets+arch.
 
@@ -691,10 +648,8 @@ def cleanup_module_commits(
     Returns:
         Number of entries reset
     """
-    # Ensure table exists (mirrors: create_tables in core cleanup)
-    _create_module_table(conn, module_name)
-
     table = _module_table_name(module_name)
+    config_sets_json = Json(config_sets)
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -730,7 +685,6 @@ def main():
             "fetch-next",
             "mark-complete",
             "cleanup",
-            "check-incomplete",
         ],
         help="Operation to perform",
     )
@@ -819,7 +773,6 @@ def main():
     if not config_sets:
         print("Error: config_sets not found in config file", file=sys.stderr)
         sys.exit(1)
-    config_sets_json = Json(config_sets)
 
     # Connect to PostgreSQL
     try:
@@ -837,6 +790,9 @@ def main():
     except Exception as err:
         print(f"Failed to connect to PostgreSQL: {err}", file=sys.stderr)
         sys.exit(1)
+
+    # Create table + indexes once, before dispatching to any operation
+    _create_module_table(conn, args.module_name)
 
     try:
         if args.operation == "populate":
@@ -863,7 +819,6 @@ def main():
                 module_name=args.module_name,
                 config_name=config_name,
                 config_sets=config_sets,
-                config_sets_json=config_sets_json,
                 max_core_commits=args.max_core_commits,
                 max_module_commits=args.max_module_commits,
             )
@@ -881,16 +836,17 @@ def main():
                 print("Error: architecture could not be determined", file=sys.stderr)
                 sys.exit(1)
 
-            pairs = fetch_next_module_commits(
+            pairs, max_timestamps = fetch_next_module_commits(
                 conn=conn,
                 module_name=args.module_name,
                 config_name=config_name,
-                config_sets_json=config_sets_json,
+                config_sets=config_sets,
                 architecture=args.architecture,
                 max_pairs=args.max_pairs,
             )
-            # Output pairs to stdout for workflow to capture
+            # Output pairs and timestamps on separate lines for workflow
             print(" ".join(pairs))
+            print(" ".join(max_timestamps))
 
         elif args.operation == "mark-complete":
             if not args.pairs:
@@ -923,7 +879,7 @@ def main():
                 module_name=args.module_name,
                 pairs=args.pairs,
                 config_name=config_name,
-                config_sets_json=config_sets_json,
+                config_sets=config_sets,
                 architecture=args.architecture,
             )
 
@@ -939,29 +895,13 @@ def main():
                 conn=conn,
                 module_name=args.module_name,
                 config_name=config_name,
-                config_sets_json=config_sets_json,
+                config_sets=config_sets,
                 architecture=args.architecture,
             )
 
-        elif args.operation == "check-incomplete":
-            if not config_name:
-                print(
-                    "Error: --config-file is required for check-incomplete",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            if not args.architecture:
-                print("Error: architecture could not be determined", file=sys.stderr)
-                sys.exit(1)
-
-            check_incomplete_rows(
-                conn=conn,
-                module_name=args.module_name,
-                config_name=config_name,
-                config_sets_json=config_sets_json,
-                architecture=args.architecture,
-            )
-
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     except psycopg2.IntegrityError as e:
         print(
             f"Database integrity error (likely NULL in NOT NULL field): {e}",

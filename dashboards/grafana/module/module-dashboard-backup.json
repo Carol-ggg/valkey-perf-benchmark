@@ -27,7 +27,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT DISTINCT timestamp AS time, 'core: ' || LEFT(commit, 7) || ' | module: ' || COALESCE(LEFT(module_commit, 7), 'N/A') || ' | ' || COALESCE(config_set::text, '') AS text FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) ORDER BY timestamp",
+          "rawSql": "SELECT DISTINCT timestamp AS time, 'core: ' || LEFT(commit, 7) || ' | module: ' || COALESCE(LEFT(module_commit, 7), 'N/A') AS text FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) ORDER BY timestamp",
           "refId": "Anno"
         }
       }
@@ -56,6 +56,10 @@
             "spanNulls": false,
             "stacking": { "mode": "none" }
           },
+          "links": [
+            { "targetBlank": true, "title": "View Core Commit", "url": "https://github.com/valkey-io/valkey/commit/${__data.fields['commit_hash']}" },
+            { "targetBlank": true, "title": "View Module Commit", "url": "https://github.com/valkey-io/valkey-search/commit/${__data.fields['module_commit_hash']}" }
+          ],
           "mappings": [],
           "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
         },
@@ -75,8 +79,17 @@
           "rawQuery": true,
           "rawSql": "SELECT timestamp AS time, AVG(rps) AS value, scenario || ' (' || test_phase || ')' AS metric FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) GROUP BY timestamp, scenario, test_phase ORDER BY timestamp",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "postgres", "uid": "efnv1zvlondhcb" },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT timestamp AS time, commit AS commit_hash, module_commit AS module_commit_hash FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) ORDER BY timestamp",
+          "refId": "B"
         }
       ],
+      "transformations": [{ "id": "joinByField", "options": { "byField": "Time", "mode": "outer" } }],
       "title": "RPS over time",
       "type": "timeseries"
     },
@@ -97,6 +110,10 @@
             "spanNulls": false,
             "stacking": { "mode": "none" }
           },
+          "links": [
+            { "targetBlank": true, "title": "View Core Commit", "url": "https://github.com/valkey-io/valkey/commit/${__data.fields['commit_hash']}" },
+            { "targetBlank": true, "title": "View Module Commit", "url": "https://github.com/valkey-io/valkey-search/commit/${__data.fields['module_commit_hash']}" }
+          ],
           "mappings": [],
           "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
         },
@@ -116,8 +133,17 @@
           "rawQuery": true,
           "rawSql": "SELECT timestamp AS time, AVG(p99_latency_ms) AS value, scenario || ' (' || test_phase || ')' AS metric FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) GROUP BY timestamp, scenario, test_phase ORDER BY timestamp",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "postgres", "uid": "efnv1zvlondhcb" },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT timestamp AS time, commit AS commit_hash, module_commit AS module_commit_hash FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) ORDER BY timestamp",
+          "refId": "B"
         }
       ],
+      "transformations": [{ "id": "joinByField", "options": { "byField": "Time", "mode": "outer" } }],
       "title": "p99 Latency over time",
       "type": "timeseries"
     },
@@ -138,6 +164,10 @@
             "spanNulls": false,
             "stacking": { "mode": "none" }
           },
+          "links": [
+            { "targetBlank": true, "title": "View Core Commit", "url": "https://github.com/valkey-io/valkey/commit/${__data.fields['commit_hash']}" },
+            { "targetBlank": true, "title": "View Module Commit", "url": "https://github.com/valkey-io/valkey-search/commit/${__data.fields['module_commit_hash']}" }
+          ],
           "mappings": [],
           "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
         },
@@ -157,8 +187,17 @@
           "rawQuery": true,
           "rawSql": "SELECT timestamp AS time, AVG(p95_latency_ms) AS value, scenario || ' (' || test_phase || ')' AS metric FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) GROUP BY timestamp, scenario, test_phase ORDER BY timestamp",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "postgres", "uid": "efnv1zvlondhcb" },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT timestamp AS time, commit AS commit_hash, module_commit AS module_commit_hash FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) ORDER BY timestamp",
+          "refId": "B"
         }
       ],
+      "transformations": [{ "id": "joinByField", "options": { "byField": "Time", "mode": "outer" } }],
       "title": "p95 Latency over time",
       "type": "timeseries"
     },
@@ -179,6 +218,10 @@
             "spanNulls": false,
             "stacking": { "mode": "none" }
           },
+          "links": [
+            { "targetBlank": true, "title": "View Core Commit", "url": "https://github.com/valkey-io/valkey/commit/${__data.fields['commit_hash']}" },
+            { "targetBlank": true, "title": "View Module Commit", "url": "https://github.com/valkey-io/valkey-search/commit/${__data.fields['module_commit_hash']}" }
+          ],
           "mappings": [],
           "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
         },
@@ -198,8 +241,17 @@
           "rawQuery": true,
           "rawSql": "SELECT timestamp AS time, AVG(p50_latency_ms) AS value, scenario || ' (' || test_phase || ')' AS metric FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) GROUP BY timestamp, scenario, test_phase ORDER BY timestamp",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "postgres", "uid": "efnv1zvlondhcb" },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT timestamp AS time, commit AS commit_hash, module_commit AS module_commit_hash FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) ORDER BY timestamp",
+          "refId": "B"
         }
       ],
+      "transformations": [{ "id": "joinByField", "options": { "byField": "Time", "mode": "outer" } }],
       "title": "p50 Latency over time",
       "type": "timeseries"
     },
@@ -220,6 +272,10 @@
             "spanNulls": false,
             "stacking": { "mode": "none" }
           },
+          "links": [
+            { "targetBlank": true, "title": "View Core Commit", "url": "https://github.com/valkey-io/valkey/commit/${__data.fields['commit_hash']}" },
+            { "targetBlank": true, "title": "View Module Commit", "url": "https://github.com/valkey-io/valkey-search/commit/${__data.fields['module_commit_hash']}" }
+          ],
           "mappings": [],
           "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
         },
@@ -239,8 +295,17 @@
           "rawQuery": true,
           "rawSql": "SELECT timestamp AS time, AVG(min_latency_ms) AS value, scenario || ' (' || test_phase || ')' AS metric FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) GROUP BY timestamp, scenario, test_phase ORDER BY timestamp",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "postgres", "uid": "efnv1zvlondhcb" },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT timestamp AS time, commit AS commit_hash, module_commit AS module_commit_hash FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) ORDER BY timestamp",
+          "refId": "B"
         }
       ],
+      "transformations": [{ "id": "joinByField", "options": { "byField": "Time", "mode": "outer" } }],
       "title": "Min Latency over time",
       "type": "timeseries"
     },
@@ -261,6 +326,10 @@
             "spanNulls": false,
             "stacking": { "mode": "none" }
           },
+          "links": [
+            { "targetBlank": true, "title": "View Core Commit", "url": "https://github.com/valkey-io/valkey/commit/${__data.fields['commit_hash']}" },
+            { "targetBlank": true, "title": "View Module Commit", "url": "https://github.com/valkey-io/valkey-search/commit/${__data.fields['module_commit_hash']}" }
+          ],
           "mappings": [],
           "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
         },
@@ -280,8 +349,17 @@
           "rawQuery": true,
           "rawSql": "SELECT timestamp AS time, AVG(max_latency_ms) AS value, scenario || ' (' || test_phase || ')' AS metric FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) GROUP BY timestamp, scenario, test_phase ORDER BY timestamp",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "postgres", "uid": "efnv1zvlondhcb" },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT timestamp AS time, commit AS commit_hash, module_commit AS module_commit_hash FROM ${table_name} WHERE $__timeFilter(timestamp) AND config_name = '$config_name' AND architecture = '$architecture' AND group_description = '$group_description' AND config_set::text = '${config_set}' AND scenario IN (${scenario:sqlstring}) ORDER BY timestamp",
+          "refId": "B"
         }
       ],
+      "transformations": [{ "id": "joinByField", "options": { "byField": "Time", "mode": "outer" } }],
       "title": "Max Latency over time",
       "type": "timeseries"
     },
