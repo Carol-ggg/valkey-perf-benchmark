@@ -927,6 +927,7 @@ class ClientRunner:
                     metrics_processor,
                     warmup_duration,
                     commit_time,
+                    group_description,
                 )
                 return metrics_list if metrics_list else None
             elif self._should_use_parallel(scenario):
@@ -1042,6 +1043,7 @@ class ClientRunner:
         config_set,
         warmup_duration,
         metrics_processor,
+        group_description=None,
     ):
         """Create metric for mixed workload."""
         if not metrics_processor:
@@ -1062,10 +1064,17 @@ class ClientRunner:
                 {
                     "test_id": test_id,
                     "test_phase": test_phase,
+                    "group": group_id,
                     "config_set": config_set,
                     "status": "success",
                 }
             )
+            if group_description:
+                m["group_description"] = group_description
+            if self.config_name:
+                m["config_name"] = self.config_name
+            if cfg.get("dataset"):
+                m["dataset"] = cfg["dataset"]
             logging.info(f"{test_phase} RPS: {row['rps']}")
         return m
 
@@ -1185,6 +1194,7 @@ class ClientRunner:
         metrics_processor,
         warmup_duration,
         commit_time,
+        group_description=None,
     ):
         """Run mixed workload: orchestrates concurrent writes + reads."""
         # 1. Normalize
@@ -1234,6 +1244,7 @@ class ClientRunner:
                     config_set,
                     warmup_duration,
                     metrics_processor,
+                    group_description,
                 )
                 if m:
                     metrics_list.append(m)
@@ -1255,6 +1266,7 @@ class ClientRunner:
                     config_set,
                     warmup_duration,
                     metrics_processor,
+                    group_description,
                 )
                 if m:
                     metrics_list.append(m)
