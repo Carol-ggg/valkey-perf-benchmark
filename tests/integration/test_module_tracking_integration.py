@@ -2202,8 +2202,7 @@ class TestAssignPriorityInMemory:
 
 
 class TestRetroactiveSubsetDetection:
-    """Verify that completing a superset retroactively marks pending subset rows.
-    """
+    """Verify that completing a superset retroactively marks pending subset rows."""
 
     def test_retroactive_subset_marking_full_scenario(self, conn, mock_git):
         """Comprehensive test covering all retroactive subset behaviors in one flow.
