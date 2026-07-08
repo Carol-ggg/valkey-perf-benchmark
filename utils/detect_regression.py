@@ -131,7 +131,7 @@ def main() -> None:
         help="Minimum RPS regression %% to trigger an alert (default: 5.0)",
     )
     parser.add_argument("--test-type", default="core")
-    parser.add_argument("--sslmode", default="require")
+    parser.add_argument("--sslmode", default="prefer")
     args = parser.parse_args()
 
     try:
