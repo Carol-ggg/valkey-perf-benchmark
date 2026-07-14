@@ -10,6 +10,7 @@ will automatically create new database columns.
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -414,14 +415,15 @@ def process_commit_metrics(
     return count, False
 
 
-def resolve_table_name(
-    table_name: Optional[str], module: Optional[str]
-) -> Optional[str]:
+def resolve_table_name(table_name: Optional[str], module: str) -> Optional[str]:
     """Resolve table name: use explicit --table-name if provided,
-    otherwise auto-generate from --module as 'benchmark_metrics_{module}'."""
+    otherwise auto-generate from --module as 'benchmark_metrics_{module}'.
+    If module is 'core', requires explicit --table-name."""
     if table_name:
         return table_name
-    if module:
+    if module and module != "core":
+        if not re.match(r"^[a-z][a-z0-9_]{0,30}$", module):
+            raise ValueError(f"Invalid module name: '{module}'")
         return f"benchmark_metrics_{module}"
     return None
 
@@ -448,8 +450,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--module",
-        help="Module name (e.g., 'search'). Used to auto-generate table name as "
-        "'benchmark_metrics_{module}' when --table-name is not provided.",
+        default="core",
+        help="Module name (e.g., 'search'). Defaults to 'core' which requires "
+        "explicit --table-name. Other values auto-generate table name as "
+        "'benchmark_metrics_{module}'.",
     )
     parser.add_argument(
         "--test-type",

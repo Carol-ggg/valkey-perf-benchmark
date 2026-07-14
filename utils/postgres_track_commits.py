@@ -4,6 +4,7 @@
 import argparse
 import json
 import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -18,23 +19,25 @@ DEFAULT_CONFIG_SETS = [{}]
 DEFAULT_PROFILING_SETS = [{"enabled": False}]
 
 
-def _resolve_module_table_name(module_name: Optional[str]) -> str:
+def _resolve_module_table_name(module_name: str) -> str:
     """Resolve tracking table name from module name.
 
     Args:
-        module_name: Module identifier (e.g., 'search'), or None for core.
+        module_name: Module identifier (e.g., 'search', 'core').
 
     Returns:
-        Table name: 'benchmark_module_commits_search' for module,
-        or CORE_TABLE_NAME ('benchmark_commits') if None.
+        Table name: CORE_TABLE_NAME ('benchmark_commits') if 'core',
+        or 'benchmark_module_commits_{module_name}' otherwise.
 
     Raises:
-        ValueError: If module_name is empty string (likely accidental omission).
+        ValueError: If module_name is empty or invalid.
     """
-    if module_name is None:
-        return CORE_TABLE_NAME
     if not module_name.strip():
         raise ValueError("Module name cannot be empty.")
+    if module_name == "core":
+        return CORE_TABLE_NAME
+    if not re.match(r"^[a-z][a-z0-9_]{0,30}$", module_name):
+        raise ValueError(f"Invalid module_name: '{module_name}'")
     return f"benchmark_module_commits_{module_name}"
 
 
@@ -57,17 +60,14 @@ def _apply_config_overrides(
     cluster_mode: Optional[str] = None,
     skip_config_set: bool = False,
     skip_profiling: bool = False,
-) -> dict:
-    """Apply runtime overrides to a config dict.
+) -> None:
+    """Apply runtime overrides to a config dict in-place.
 
     Args:
-        cfg: Config dictionary to modify.
+        cfg: Config dictionary to modify in-place.
         cluster_mode: If provided, overwrites 'cluster_mode' field ('true' or 'false').
         skip_config_set: If True, sets 'config_sets' to default [{}].
         skip_profiling: If True, sets 'profiling_sets' to default [{"enabled": False}].
-
-    Returns:
-        Modified config dict.
     """
     if cluster_mode is not None:
         if cluster_mode.lower() == "true":
@@ -77,18 +77,12 @@ def _apply_config_overrides(
     if skip_config_set:
         cfg["config_sets"] = DEFAULT_CONFIG_SETS
     if skip_profiling:
-        if "profiling_sets" not in cfg:
-            print(
-                "Warning: --skip-profiling passed but no 'profiling_sets' in config",
-                file=sys.stderr,
-            )
         cfg["profiling_sets"] = DEFAULT_PROFILING_SETS
-    return cfg
 
 
 def _load_config(
     config_file: Optional[str],
-    module_name: Optional[str] = None,
+    module_name: str = "core",
     cluster_mode: Optional[str] = None,
     skip_config_set: bool = False,
     skip_profiling: bool = False,
@@ -113,18 +107,16 @@ def _load_config(
 
     # Apply runtime overrides to config dicts (both core and module)
     if isinstance(config, dict):
-        config = _apply_config_overrides(
-            config, cluster_mode, skip_config_set, skip_profiling
-        )
+        _apply_config_overrides(config, cluster_mode, skip_config_set, skip_profiling)
     elif isinstance(config, list):
-        config = [
-            _apply_config_overrides(cfg, cluster_mode, skip_config_set, skip_profiling)
-            for cfg in config
-            if isinstance(cfg, dict)
-        ]
+        for cfg in config:
+            if isinstance(cfg, dict):
+                _apply_config_overrides(
+                    cfg, cluster_mode, skip_config_set, skip_profiling
+                )
 
     # For module tracking, strip large keys and add config_name
-    if module_name:
+    if module_name and module_name != "core":
         config_name = _extract_config_name(config_file)
         skip_keys = {"test_groups", "dataset_generation", "query_generation"}
 
@@ -147,17 +139,18 @@ def _load_config(
     return config
 
 
-def create_tables(conn, table_name: str = CORE_TABLE_NAME):
+def create_tables(conn, table_name: str = CORE_TABLE_NAME, module_name: str = "core"):
     """Create benchmark tracking table if it doesn't exist.
 
     Args:
         conn: PostgreSQL connection.
         table_name: Table name to create. Defaults to core 'benchmark_commits'.
+        module_name: Module name for short index prefix. 'core' uses core prefix.
     """
-    if table_name == CORE_TABLE_NAME:
+    if module_name == "core":
         prefix = "_"
     else:
-        prefix = f"_{table_name}_"
+        prefix = f"_{module_name}_"
 
     with conn.cursor() as cur:
         cur.execute(
@@ -172,7 +165,7 @@ def create_tables(conn, table_name: str = CORE_TABLE_NAME):
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW(),
 
-                -- Unique constraint: same commit + config + architecture can only exist once                
+                -- Unique constraint: same commit + config + architecture can only exist once
                 CONSTRAINT unique{prefix}sha_config_arch UNIQUE(sha, config, architecture)
             );
             
@@ -231,8 +224,6 @@ def mark_commits(
         config: Config content (dict/list) to track
         table_name: Target table name. Defaults to core table.
     """
-    # Ensure tables exist
-    create_tables(conn, table_name)
 
     with conn.cursor() as cur:
         for sha in shas:
@@ -325,8 +316,6 @@ def cleanup_incomplete_commits(
     Returns:
         Number of entries cleaned up
     """
-    # Ensure tables exist
-    create_tables(conn, table_name)
 
     query, params = _build_cleanup_query(table_name, config, architecture)
 
@@ -492,8 +481,6 @@ def determine_commits_to_benchmark(
     Returns:
         List of commit SHAs that need benchmarking
     """
-    # Ensure tables exist
-    create_tables(conn, table_name)
 
     # Clean up incomplete commits first
     cleanup_incomplete_commits(
@@ -594,8 +581,6 @@ def get_commits_by_config(
     Returns:
         List of commit entries
     """
-    # Ensure tables exist
-    create_tables(conn, table_name)
 
     with conn.cursor() as cur:
         if config:
@@ -644,8 +629,6 @@ def get_unique_configs(conn, table_name: str = CORE_TABLE_NAME) -> List[dict]:
     Returns:
         List of unique configs
     """
-    # Ensure tables exist
-    create_tables(conn, table_name)
 
     with conn.cursor() as cur:
         cur.execute(
@@ -702,13 +685,14 @@ def main():
         help="Architecture (e.g., x86_64, arm64). Auto-detected if not provided.",
     )
 
-    # Module argument (optional — when provided, uses module-specific table)
+    # Module argument (defaults to 'core' which uses the core table)
     parser.add_argument(
         "--module-name",
         type=str,
-        default=None,
-        help="Module name (e.g., 'search'). When provided, operations target "
-        "'benchmark_module_commits_{module_name}' table instead of core.",
+        default="core",
+        help="Module name (e.g., 'search'). Defaults to 'core' which uses the "
+        "core 'benchmark_commits' table. Other values create/use "
+        "'benchmark_module_commits_{module_name}' table.",
     )
 
     # Runtime config overrides (applied to stored config for accurate tracking)
@@ -762,7 +746,7 @@ def main():
         args.architecture = platform.machine()
         print(f"Auto-detected architecture: {args.architecture}", file=sys.stderr)
 
-    # Resolve module table name (None means core table)
+    # Resolve table name from module name ('core' uses benchmark_commits)
     module_name = args.module_name
     table_name = _resolve_module_table_name(module_name)
     print(f"Using table: {table_name}", file=sys.stderr)
@@ -784,6 +768,9 @@ def main():
         sys.exit(1)
 
     try:
+        # Create table once after connection
+        create_tables(conn, table_name, module_name)
+
         if args.operation == "determine":
             if not args.repo:
                 print(
