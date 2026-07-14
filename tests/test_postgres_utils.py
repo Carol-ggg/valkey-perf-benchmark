@@ -641,7 +641,6 @@ class TestLoadConfig:
         assert result[0]["profiling_sets"][1]["enabled"] is True
 
 
-
 # ---------------------------------------------------------------------------
 # _build_cleanup_query (postgres_track_commits)
 # ---------------------------------------------------------------------------
