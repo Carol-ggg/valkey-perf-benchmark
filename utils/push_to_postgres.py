@@ -10,6 +10,7 @@ will automatically create new database columns.
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -377,8 +378,6 @@ def process_commit_metrics(
     table_name: str,
     dry_run: bool = False,
     test_type: str = "core",
-    module_commit: Optional[str] = None,
-    module_commit_timestamp: Optional[str] = None,
 ) -> Tuple[int, bool]:
     """Process metrics for a single commit directory.
 
@@ -388,8 +387,6 @@ def process_commit_metrics(
         table_name: Name of the PostgreSQL table to insert into.
         dry_run: If True, only show what would be inserted without actually inserting.
         test_type: Test type identifier (e.g., 'core', 'fts') for filtering in dashboards.
-        module_commit: Module commit SHA (for tracking module-specific versions).
-        module_commit_timestamp: Module commit timestamp (ISO 8601). Overrides metric timestamp.
 
     Returns:
         Tuple of (number of metrics processed, whether any records were skipped).
@@ -406,13 +403,9 @@ def process_commit_metrics(
         print(f"Skipping {commit_dir.name}: empty metrics")
         return 0, True
 
-    # Augment metrics with test_type, module_commit, and timestamp override at push time
+    # Augment metrics with test_type at push time
     for metric in metrics_data:
         metric["test_type"] = test_type
-        if module_commit:
-            metric["module_commit"] = module_commit
-        if module_commit_timestamp:
-            metric["module_commit_timestamp"] = module_commit_timestamp
 
     print(f"\n=== Processing {commit_dir.name} ===")
     count = push_to_postgres(metrics_data, conn, table_name, dry_run)
@@ -422,16 +415,26 @@ def process_commit_metrics(
     return count, False
 
 
-def resolve_table_name(
-    table_name: Optional[str], module: Optional[str]
-) -> Optional[str]:
-    """Resolve table name: use explicit --table-name if provided,
-    otherwise auto-generate from --module as 'benchmark_metrics_{module}'."""
-    if table_name:
-        return table_name
-    if module:
-        return f"benchmark_metrics_{module}"
-    return None
+CORE_METRICS_TABLE = "benchmark_metrics"
+
+
+def resolve_table_name(module_name: str) -> str:
+    """Resolve metrics table name from module name.
+
+    Args:
+        module_name: Module identifier (e.g., 'search', 'core').
+
+    Returns:
+        'benchmark_metrics' for 'core', or 'benchmark_metrics_{module_name}' otherwise.
+
+    Raises:
+        ValueError: If module_name is invalid.
+    """
+    if module_name == "core":
+        return CORE_METRICS_TABLE
+    if not re.match(r"^[a-z][a-z0-9_]{0,30}$", module_name):
+        raise ValueError(f"Invalid module name: '{module_name}'")
+    return f"{CORE_METRICS_TABLE}_{module_name}"
 
 
 def main() -> None:
@@ -449,15 +452,11 @@ def main() -> None:
         "--password", help="Database password (not required for dry-run)"
     )
     parser.add_argument(
-        "--table-name",
-        help="PostgreSQL table name (required if --module is not provided; "
-        "auto-generated as 'benchmark_metrics_<module>' when --module is given; "
-        "if both --table-name and --module are provided, --table-name takes precedence)",
-    )
-    parser.add_argument(
         "--module",
-        help="Module name (e.g., 'search'). Used to auto-generate table name as "
-        "'benchmark_metrics_{module}' when --table-name is not provided.",
+        default="core",
+        help="Module name (e.g., 'search'). Defaults to 'core' which uses "
+        "'benchmark_metrics' table. Other values use "
+        "'benchmark_metrics_{module_name}' table.",
     )
     parser.add_argument(
         "--test-type",
@@ -465,23 +464,12 @@ def main() -> None:
         help="Test type identifier (e.g., 'core', 'fts') for filtering in dashboards",
     )
     parser.add_argument(
-        "--module-commit",
-        help="Module commit SHA (for tracking module-specific versions)",
-    )
-    parser.add_argument(
-        "--module-commit-timestamp",
-        default=None,
-        help="Module commit timestamp (ISO 8601). Stored as separate column for module tracking.",
-    )
-    parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be inserted"
     )
 
     args = parser.parse_args()
 
-    args.table_name = resolve_table_name(args.table_name, args.module)
-    if args.table_name is None:
-        parser.error("--table-name is required when --module is not provided")
+    args.table_name = resolve_table_name(args.module)
 
     if not args.dry_run:
         if not all([args.host, args.database, args.username]):
@@ -550,8 +538,6 @@ def main() -> None:
                     args.table_name,
                     args.dry_run,
                     test_type=args.test_type,
-                    module_commit=args.module_commit,
-                    module_commit_timestamp=args.module_commit_timestamp,
                 )
                 total_processed += count
                 if was_skipped:

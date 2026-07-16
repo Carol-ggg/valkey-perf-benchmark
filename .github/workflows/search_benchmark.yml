@@ -3,11 +3,6 @@ name: Valkey Search Benchmark
 on:
   workflow_dispatch:
     inputs:
-      num_runs:
-        description: "Number of runs to benchmark"
-        required: false
-        default: "1"
-        type: string
       max_module_commits:
         description: "Max module commits to scan"
         required: false
@@ -62,13 +57,14 @@ jobs:
       PERF_BENCHMARK_PATH: "${{ github.workspace }}/valkey-perf-benchmark"
       CONFIG_FILE: "${{ github.workspace }}/valkey-perf-benchmark/configs/fts-mixed-test.json"
       # Run parameters
-      NUM_RUN: ${{ inputs.num_runs || '5' }}
       MAX_MODULE_COMMITS: ${{ inputs.max_module_commits || '3' }}
+      CORE_COMMIT_INPUT: ${{ inputs.core_commit || '' }}
+      MODULE_COMMITS_INPUT: ${{ inputs.module_commits || '' }}
       CLUSTER_MODE: ""
       SKIP_CONFIG_SET: ""
       SKIP_PROFILING: ""
     runs-on: [self-hosted, valkey-search-arm]
-    timeout-minutes: 7200
+    timeout-minutes: 1800
     steps:
       - name: Set up Python
         uses: kishaningithub/setup-python-amazon-linux@63dc7bd642c6a564d0a93dd4b1cbe3e448ce3621
@@ -144,7 +140,7 @@ jobs:
           gcc --version
           g++ --version
           
-          pip install -r requirements.txt
+          pip install --require-hashes -r requirements.txt
 
       - name: Build valkey_ram (for dataset-enabled valkey-benchmark)
         working-directory: valkey_ram
@@ -169,8 +165,8 @@ jobs:
         id: core_commit
         working-directory: ${{ env.CORE_DIR }}
         run: |
-          if [[ -n "${{ inputs.core_commit }}" ]]; then
-            CORE_SHA="${{ inputs.core_commit }}"
+          if [[ -n "$CORE_COMMIT_INPUT" ]]; then
+            CORE_SHA="$CORE_COMMIT_INPUT"
             echo "Using manual core commit: $CORE_SHA"
           else
             CORE_SHA=$(git rev-parse HEAD)
@@ -184,7 +180,7 @@ jobs:
           PGPASSWORD: ${{ secrets.PG_PASSWORD }}
         run: |
           python utils/postgres_track_commits.py cleanup \
-            --module-name "$MODULE_NAME" \
+            --module "$MODULE_NAME" \
             --config-file "$CONFIG_FILE" \
             ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
             ${SKIP_CONFIG_SET:+--skip-config-set} \
@@ -201,12 +197,12 @@ jobs:
         env:
           PGPASSWORD: ${{ secrets.PG_PASSWORD }}
         run: |
-          if [[ -n "${{ inputs.module_commits }}" ]]; then
-            COMMITS="${{ inputs.module_commits }}"
+          if [[ -n "$MODULE_COMMITS_INPUT" ]]; then
+            COMMITS="$MODULE_COMMITS_INPUT"
             echo "Using manual module commits: $COMMITS"
           else
             COMMITS=$(python utils/postgres_track_commits.py determine \
-              --module-name "$MODULE_NAME" \
+              --module "$MODULE_NAME" \
               --repo "$MODULE_PATH" \
               --branch "$MODULE_BRANCH" \
               --config-file "$CONFIG_FILE" \
@@ -236,7 +232,7 @@ jobs:
           PGPASSWORD: ${{ secrets.PG_PASSWORD }}
         run: |
           python utils/postgres_track_commits.py mark \
-            --module-name "$MODULE_NAME" \
+            --module "$MODULE_NAME" \
             --repo "$MODULE_PATH" \
             --config-file "$CONFIG_FILE" \
             ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
@@ -303,11 +299,12 @@ jobs:
               --config "$CONFIG_FILE" \
               --mode both \
               --module-path "$MODULE_PATH/.build-release/libsearch.so" \
+              --module-commit "$MODULE_SHA" \
+              --module-commit-timestamp "$MODULE_TS" \
               ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
               ${SKIP_CONFIG_SET:+--skip-config-set} \
               ${SKIP_PROFILING:+--skip-profiling} \
-              --results-dir "$RESULTS_DIR" \
-              --runs $NUM_RUN
+              --results-dir "$RESULTS_DIR"
 
             # --- Push results to postgres ---
             python utils/push_to_postgres.py \
@@ -318,13 +315,11 @@ jobs:
               --username ${{ secrets.PG_USERNAME }} \
               --password "$PGPASSWORD" \
               --module "$MODULE_NAME" \
-              --test-type fts \
-              --module-commit "$MODULE_SHA" \
-              --module-commit-timestamp "$MODULE_TS"
+              --test-type fts
 
             # --- Mark this module commit complete ---
             python utils/postgres_track_commits.py mark \
-              --module-name "$MODULE_NAME" \
+              --module "$MODULE_NAME" \
               --repo "$MODULE_PATH" \
               --config-file "$CONFIG_FILE" \
               ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
@@ -370,7 +365,7 @@ jobs:
           PGPASSWORD: ${{ secrets.PG_PASSWORD }}
         run: |
           python utils/postgres_track_commits.py cleanup \
-            --module-name "$MODULE_NAME" \
+            --module "$MODULE_NAME" \
             --config-file "$CONFIG_FILE" \
             ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
             ${SKIP_CONFIG_SET:+--skip-config-set} \
