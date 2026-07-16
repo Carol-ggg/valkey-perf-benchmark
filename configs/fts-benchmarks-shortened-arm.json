@@ -102,20 +102,9 @@
           }
         ]
       },
-      "wiki_100k_1field_100tok_uuidkey.xml": {
-        "doc_count": 100000,
+      "wiki_1m_1field_100tok.xml": {
+        "doc_count": 1000000,
         "fields": [
-          {
-            "name": "keyname",
-            "size": 150,
-            "transforms": [
-              {
-                "type": "uuid_tokens",
-                "token_count": 1,
-                "char_length": 128
-              }
-            ]
-          },
           {
             "name": "field1",
             "size": 5000,
@@ -129,11 +118,6 @@
       }
     },
     "query_generation": {
-      "hybrid_queries.csv": {
-        "type": "proximity_phrase",
-        "doc_count": 100,
-        "term_count": 1
-      },
       "composed_tag_queries.csv": {
         "type": "tag_only",
         "doc_count": 100,
@@ -159,7 +143,7 @@
               "FT.CREATE rd0 ON HASH PREFIX 1 rd0- SCHEMA field1 TEXT"
             ],
             "flush_before": true,
-            "dataset": "datasets/wiki_100k_1field_100tok_uuidkey.xml",
+            "dataset": "datasets/wiki_1m_1field_100tok.xml",
             "xml_root_element": "doc",
             "maxdocs": 100000,
             "clients": 1000,
@@ -220,11 +204,11 @@
             "type": "read",
             "cluster_execution": "single",
             "description": "TEXT-only on hybrid schema (baseline comparison with P1b)",
-            "dataset": "datasets/hybrid_queries.csv",
+            "dataset": "datasets/search_terms.csv",
             "clients": 1000,
             "duration": 90,
             "warmup": 30,
-            "command": "FT.SEARCH rd0 \"@title:__field:term1__\"",
+            "command": "FT.SEARCH rd0 \"@title:__field:term__\"",
             "options": {
               "": ""
             }
@@ -234,11 +218,11 @@
             "type": "read",
             "cluster_execution": "single",
             "description": "TEXT + NUMERIC range filter",
-            "dataset": "datasets/hybrid_queries.csv",
+            "dataset": "datasets/search_terms.csv",
             "clients": 1000,
             "duration": 90,
             "warmup": 30,
-            "command": "FT.SEARCH rd0 \"__field:term1__ @price:[100 500]\"",
+            "command": "FT.SEARCH rd0 \"__field:term__ @price:[100 500]\"",
             "options": {
               "": ""
             }
@@ -248,11 +232,11 @@
             "type": "read",
             "cluster_execution": "single",
             "description": "TEXT + TAG filter",
-            "dataset": "datasets/hybrid_queries.csv",
+            "dataset": "datasets/search_terms.csv",
             "clients": 1000,
             "duration": 90,
             "warmup": 30,
-            "command": "FT.SEARCH rd0 \"__field:term1__ @category:{electronics}\"",
+            "command": "FT.SEARCH rd0 \"__field:term__ @category:{electronics}\"",
             "options": {
               "": ""
             }
@@ -480,11 +464,6 @@
       }
     },
     "query_generation": {
-      "hybrid_queries.csv": {
-        "type": "proximity_phrase",
-        "doc_count": 100,
-        "term_count": 1
-      }
     },
     "test_groups": [
       {
@@ -511,11 +490,11 @@
             "type": "read",
             "cluster_execution": "parallel",
             "description": "TEXT + NUMERIC range (cluster fanout.cc coverage)",
-            "dataset": "datasets/hybrid_queries.csv",
+            "dataset": "datasets/search_terms.csv",
             "clients": 1000,
             "duration": 90,
             "warmup": 30,
-            "command": "FT.SEARCH rd0 \"__field:term1__ @price:[100 500]\"",
+            "command": "FT.SEARCH rd0 \"__field:term__ @price:[100 500]\"",
             "options": {
               "": ""
             }
