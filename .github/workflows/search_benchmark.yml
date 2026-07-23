@@ -3,10 +3,18 @@ name: Valkey Search Benchmark
 on:
   workflow_dispatch:
     inputs:
+      config_json:
+        description: "Benchmark config file to use"
+        required: true
+        default: "fts-benchmarks-shortened-arm.json"
+        type: choice
+        options:
+          - "fts-benchmarks-shortened-arm.json"
+          - "fts-benchmarks-arm.json"
       max_module_commits:
-        description: "Max module commits to scan"
+        description: "Max module commits to benchmark (default 1)"
         required: false
-        default: "3"
+        default: "1"
         type: string
       core_commit:
         description: "Manual core commit SHA (overrides latest HEAD)"
@@ -18,8 +26,24 @@ on:
         required: false
         default: ""
         type: string
+      skip_profiling:
+        description: "Check for skip profiling"
+        default: true
+        type: boolean
+      skip_config_set:
+        description: "Check for skip config_sets (use default config set)"
+        default: false
+        type: boolean
+      cluster_mode:
+        description: "Cluster mode (empty=run config in file, true=cluster-mode only, false=non-cluster-mode only)"
+        default: ""
+        type: choice
+        options:
+          - ""
+          - "true"
+          - "false"
   schedule:
-    - cron: "0 9 * * *"
+    - cron: "0 */4 * * *"
 
 # Prevent concurrent workflow runs to avoid conflicts and resource contention
 # - group: All workflow runs share the same concurrency group
@@ -42,7 +66,7 @@ jobs:
       # Module configuration
       MODULE_NAME: "search"
       MODULE_GITHUB_REPO: "valkey-io/valkey-search"
-      MODULE_BRANCH: ${{ inputs.branch || 'main' }}
+      MODULE_BRANCH: "main"
       MODULE_DIR: "valkey-search"
       MODULE_PATH: "${{ github.workspace }}/valkey-search"
       # Core configuration
@@ -55,17 +79,20 @@ jobs:
       PERF_BENCHMARK_BRANCH: "module2-1"
       PERF_BENCHMARK_DIR: "valkey-perf-benchmark"
       PERF_BENCHMARK_PATH: "${{ github.workspace }}/valkey-perf-benchmark"
-      CONFIG_FILE: "${{ github.workspace }}/valkey-perf-benchmark/configs/fts-smoke-arm.json"
+      CONFIG_FILE: "${{ github.workspace }}/valkey-perf-benchmark/configs/${{ inputs.config_json || 'fts-benchmarks-shortened-arm.json' }}"
       # Run parameters
-      MAX_MODULE_COMMITS: ${{ inputs.max_module_commits || '3' }}
+      MAX_MODULE_COMMITS: ${{ inputs.max_module_commits || '1' }}
       CORE_COMMIT_INPUT: ${{ inputs.core_commit || '' }}
       MODULE_COMMITS_INPUT: ${{ inputs.module_commits || '' }}
-      CLUSTER_MODE: ""
-      SKIP_CONFIG_SET: ""
-      SKIP_PROFILING: ""
+      CLUSTER_MODE: ${{ inputs.cluster_mode || '' }}
+      SKIP_CONFIG_SET: ${{ inputs.skip_config_set && '1' || '' }}
+      SKIP_PROFILING: ${{ (inputs.skip_profiling == false) && '' || '1' }}
     runs-on: [self-hosted, valkey-search-arm]
-    timeout-minutes: 1800
+    timeout-minutes: 300
     steps:
+      - name: Ensure git is installed
+        run: command -v git || sudo dnf install -y git
+
       - name: Set up Python
         uses: kishaningithub/setup-python-amazon-linux@63dc7bd642c6a564d0a93dd4b1cbe3e448ce3621
         with:
@@ -180,7 +207,7 @@ jobs:
           PGPASSWORD: ${{ secrets.PG_PASSWORD }}
         run: |
           python utils/postgres_track_commits.py cleanup \
-            --module-name "$MODULE_NAME" \
+            --table "$MODULE_NAME" \
             --config-file "$CONFIG_FILE" \
             ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
             ${SKIP_CONFIG_SET:+--skip-config-set} \
@@ -202,7 +229,7 @@ jobs:
             echo "Using manual module commits: $COMMITS"
           else
             COMMITS=$(python utils/postgres_track_commits.py determine \
-              --module-name "$MODULE_NAME" \
+              --table "$MODULE_NAME" \
               --repo "$MODULE_PATH" \
               --branch "$MODULE_BRANCH" \
               --config-file "$CONFIG_FILE" \
@@ -232,7 +259,7 @@ jobs:
           PGPASSWORD: ${{ secrets.PG_PASSWORD }}
         run: |
           python utils/postgres_track_commits.py mark \
-            --module-name "$MODULE_NAME" \
+            --table "$MODULE_NAME" \
             --repo "$MODULE_PATH" \
             --config-file "$CONFIG_FILE" \
             ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
@@ -314,12 +341,12 @@ jobs:
               --database postgres \
               --username ${{ secrets.PG_USERNAME }} \
               --password "$PGPASSWORD" \
-              --module "$MODULE_NAME" \
+              --table "$MODULE_NAME" \
               --test-type fts
 
             # --- Mark this module commit complete ---
             python utils/postgres_track_commits.py mark \
-              --module-name "$MODULE_NAME" \
+              --table "$MODULE_NAME" \
               --repo "$MODULE_PATH" \
               --config-file "$CONFIG_FILE" \
               ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
@@ -365,7 +392,7 @@ jobs:
           PGPASSWORD: ${{ secrets.PG_PASSWORD }}
         run: |
           python utils/postgres_track_commits.py cleanup \
-            --module-name "$MODULE_NAME" \
+            --table "$MODULE_NAME" \
             --config-file "$CONFIG_FILE" \
             ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
             ${SKIP_CONFIG_SET:+--skip-config-set} \
