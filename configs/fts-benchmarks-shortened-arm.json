@@ -152,6 +152,7 @@
             "xml_root_element": "doc",
             "maxdocs": 100000,
             "clients": 1000,
+            "duration": 90,
             "sequential": true,
             "command": "HSET rd0-{tag}:__rand_int__ field1 \"__field:field1__\""
           },
@@ -201,6 +202,7 @@
             "dataset": "datasets/hybrid_data_100k.csv",
             "maxdocs": 100000,
             "clients": 1000,
+            "duration": 90,
             "sequential": true,
             "command": "HSET rd0-{tag}:__rand_int__ title \"__field:title__\" price \"__field:price__\" category \"__field:category__\""
           },
@@ -278,6 +280,7 @@
             "dataset": "datasets/vector_hybrid_100k.npy",
             "maxdocs": 100000,
             "clients": 1000,
+            "duration": 90,
             "sequential": true,
             "command": "HSET rd0-{tag}:__rand_int__ title \"__field:title__\" price \"__field:price__\" category \"__field:category__\" embedding \"__field:embedding__\""
           },
@@ -327,6 +330,7 @@
             "dataset": "datasets/vector_hybrid_100k.npy",
             "maxdocs": 100000,
             "clients": 1000,
+            "duration": 90,
             "sequential": true,
             "command": "HSET rd0-{tag}:__rand_int__ title \"__field:title__\" price \"__field:price__\" category \"__field:category__\" embedding \"__field:embedding__\"",
             "profiling": {
@@ -435,7 +439,7 @@
         "sampling_freq": 999,
         "delays": {
           "write": {
-            "delay": 0,
+            "delay": 60,
             "duration": 10
           },
           "read": {
@@ -515,6 +519,7 @@
             "dataset": "datasets/hybrid_data_100k.csv",
             "maxdocs": 100000,
             "clients": 1000,
+            "duration": 90,
             "sequential": true,
             "command": "HSET rd0-{tag}:__rand_int__ title \"__field:title__\" price \"__field:price__\" category \"__field:category__\""
           },
@@ -587,7 +592,7 @@
         "sampling_freq": 999,
         "delays": {
           "write": {
-            "delay": 0,
+            "delay": 60,
             "duration": 10
           },
           "read": {
