@@ -12,6 +12,7 @@ on:
           - "fts-benchmarks-shortened-arm.json"
           - "fts-benchmarks-arm.json"
           - "fts-benchmarks-mixed-only-arm.json"
+          - "cluster-mode-only.json"
       max_module_commits:
         description: "Max module commits to benchmark (default 1)"
         required: false
