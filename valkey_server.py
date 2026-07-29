@@ -560,7 +560,7 @@ class ServerLauncher:
         # Wait for all processes to stop
         self._wait_for_process_shutdown()
 
-    def _wait_for_process_shutdown(self, timeout: int = 10) -> None:
+    def _wait_for_process_shutdown(self, timeout: int = 120) -> None:
         """Wait for Valkey server process to fully terminate."""
         logging.info("Waiting for Valkey server process to terminate...")
         start_time = time.time()
