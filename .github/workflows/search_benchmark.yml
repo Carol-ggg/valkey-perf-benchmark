@@ -309,8 +309,6 @@ jobs:
 
       - name: Benchmark module commits
         if: steps.determine_commits.outputs.skip == 'false'
-        env:
-          PGPASSWORD: ${{ secrets.PG_PASSWORD }}
         run: |
           CORE_SHA="${{ steps.core_commit.outputs.sha }}"
           read -ra MODULE_SHAS <<< "${{ steps.determine_commits.outputs.commits }}"
@@ -363,7 +361,31 @@ jobs:
               ${SKIP_PROFILING:+--skip-profiling} \
               --results-dir "$RESULTS_DIR"
 
-            # --- Push results to postgres ---
+            echo "✓ Completed benchmarks for module commit: $MODULE_SHA"
+
+            # --- Clean up for next iteration ---
+            pkill -f valkey || echo "No valkey processes to kill"
+
+            # Reset to workspace root for next iteration
+            cd "${{ github.workspace }}"
+          done
+
+      # =========================================================================
+      # Push results and mark commits complete (outside loop)
+      # =========================================================================
+
+      - name: Push results to PostgreSQL
+        if: steps.determine_commits.outputs.skip == 'false'
+        working-directory: ${{ env.PERF_BENCHMARK_DIR }}
+        env:
+          PGPASSWORD: ${{ secrets.PG_PASSWORD }}
+        run: |
+          CORE_SHA="${{ steps.core_commit.outputs.sha }}"
+          read -ra MODULE_SHAS <<< "${{ steps.determine_commits.outputs.commits }}"
+
+          for MODULE_SHA in "${MODULE_SHAS[@]}"; do
+            RESULTS_DIR="results/${CORE_SHA}_${MODULE_SHA}"
+            echo "Pushing results from ./$RESULTS_DIR"
             python utils/push_to_postgres.py \
               --results-dir "./$RESULTS_DIR" \
               --host ${{ secrets.RDS_HOST }} \
@@ -373,31 +395,28 @@ jobs:
               --password "$PGPASSWORD" \
               --table "$MODULE_NAME" \
               --test-type fts
-
-            # --- Mark this module commit complete ---
-            python utils/postgres_track_commits.py mark \
-              --table "$MODULE_NAME" \
-              --repo "$MODULE_PATH" \
-              --config-file "$CONFIG_FILE" \
-              ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
-              ${SKIP_CONFIG_SET:+--skip-config-set} \
-              ${SKIP_PROFILING:+--skip-profiling} \
-              --status complete \
-              --host ${{ secrets.RDS_HOST }} \
-              --port 5432 \
-              --database postgres \
-              --username ${{ secrets.PG_USERNAME }} \
-              --password "$PGPASSWORD" \
-              "$MODULE_SHA"
-
-            echo "✓ Completed module commit: $MODULE_SHA"
-
-            # --- Clean up for next iteration ---
-            pkill -f valkey || echo "No valkey processes to kill"
-
-            # Reset to workspace root for next iteration
-            cd "${{ github.workspace }}"
           done
+
+      - name: Mark module commits complete
+        if: steps.determine_commits.outputs.skip == 'false'
+        working-directory: ${{ env.PERF_BENCHMARK_DIR }}
+        env:
+          PGPASSWORD: ${{ secrets.PG_PASSWORD }}
+        run: |
+          python utils/postgres_track_commits.py mark \
+            --table "$MODULE_NAME" \
+            --repo "$MODULE_PATH" \
+            --config-file "$CONFIG_FILE" \
+            ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
+            ${SKIP_CONFIG_SET:+--skip-config-set} \
+            ${SKIP_PROFILING:+--skip-profiling} \
+            --status complete \
+            --host ${{ secrets.RDS_HOST }} \
+            --port 5432 \
+            --database postgres \
+            --username ${{ secrets.PG_USERNAME }} \
+            --password "$PGPASSWORD" \
+            ${{ steps.determine_commits.outputs.commits }}
 
       - name: Clean large profiling data
         if: always()
