@@ -167,7 +167,8 @@
             "warmup": 30,
             "command": "FT.SEARCH rd0 \"__field:term__\"",
             "options": {
-              "": ""
+              "": "",
+              "NOCONTENT": "_nocontent"
             }
           },
           {
@@ -217,7 +218,8 @@
             "warmup": 30,
             "command": "FT.SEARCH rd0 \"@title:__field:term1__\"",
             "options": {
-              "": ""
+              "": "",
+              "NOCONTENT": "_nocontent"
             }
           },
           {
@@ -261,6 +263,33 @@
             "options": {
               "": ""
             }
+          },
+          {
+            "id": "f",
+            "type": "mixed",
+            "cluster_execution": "single",
+            "description": "Concurrent writes + TEXT+NUMERIC reads (30% writes / 70% reads)",
+            "duration": 90,
+            "warmup": 30,
+            "options": {
+              "": ""
+            },
+            "writes": [
+              {
+                "id": "a",
+                "command": "HSET rd0-{tag}:__rand_int__ title \"__field:title__\" price \"__field:price__\" category \"__field:category__\"",
+                "dataset": "datasets/hybrid_data_100k.csv",
+                "clients": 300
+              }
+            ],
+            "reads": [
+              {
+                "id": "b",
+                "command": "FT.SEARCH rd0 \"__field:term1__ @price:[100 500]\"",
+                "dataset": "datasets/hybrid_queries.csv",
+                "clients": 700
+              }
+            ]
           }
         ]
       },
@@ -534,7 +563,8 @@
             "warmup": 30,
             "command": "FT.SEARCH rd0 \"__field:term1__ @price:[100 500]\"",
             "options": {
-              "": ""
+              "": "",
+              "NOCONTENT": "_nocontent"
             }
           }
         ]

@@ -1,0 +1,169 @@
+[
+  {
+    "test_name": "FTS P2 Subset - Write + Read + Mixed",
+    "seed": false,
+    "socket_timeout": 300,
+    "dataset_generation": {
+      "hybrid_data_100k.csv": {
+        "doc_count": 100000,
+        "fields": [
+          {
+            "name": "title",
+            "size": 50,
+            "transforms": [
+              {
+                "type": "proximity_phrase",
+                "term_count": 1,
+                "combinations": 1,
+                "repeats": 1000
+              }
+            ]
+          },
+          {
+            "name": "price",
+            "size": 10,
+            "transforms": [
+              {
+                "type": "numeric_range",
+                "min": 10,
+                "max": 1000
+              }
+            ]
+          },
+          {
+            "name": "category",
+            "size": 30,
+            "transforms": [
+              {
+                "type": "tag_list",
+                "tags": [
+                  "electronics",
+                  "books",
+                  "clothing",
+                  "food",
+                  "sports"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "query_generation": {
+      "hybrid_queries.csv": {
+        "type": "proximity_phrase",
+        "doc_count": 100,
+        "term_count": 1
+      }
+    },
+    "test_groups": [
+      {
+        "group": 2,
+        "description": "P2 - Multi-index hybrid (TEXT + NUMERIC + TAG)",
+        "scenarios": [
+          {
+            "id": "a",
+            "type": "write",
+            "cluster_execution": "single",
+            "description": "Load 100K hybrid docs (TEXT + NUMERIC + TAG)",
+            "setup_commands": [
+              "FT.CREATE rd0 ON HASH PREFIX 1 rd0- SCHEMA title TEXT price NUMERIC category TAG SEPARATOR |"
+            ],
+            "flush_before": true,
+            "dataset": "datasets/hybrid_data_100k.csv",
+            "maxdocs": 100000,
+            "clients": 1000,
+            "duration": 90,
+            "sequential": true,
+            "command": "HSET rd0-{tag}:__rand_int__ title \"__field:title__\" price \"__field:price__\" category \"__field:category__\""
+          },
+          {
+            "id": "b",
+            "type": "read",
+            "cluster_execution": "single",
+            "description": "TEXT-only on hybrid schema (baseline comparison with P1b)",
+            "dataset": "datasets/hybrid_queries.csv",
+            "clients": 1000,
+            "duration": 90,
+            "warmup": 30,
+            "command": "FT.SEARCH rd0 \"@title:__field:term1__\"",
+            "options": {
+              "": "",
+              "NOCONTENT": "_nocontent"
+            }
+          },
+          {
+            "id": "f",
+            "type": "mixed",
+            "cluster_execution": "single",
+            "description": "Concurrent writes + TEXT+NUMERIC reads (30% writes / 70% reads)",
+            "duration": 90,
+            "warmup": 30,
+            "options": {
+              "": "",
+              "NOCONTENT": "_nocontent"
+            },
+            "writes": [
+              {
+                "id": "a",
+                "command": "HSET rd0-{tag}:__rand_int__ title \"__field:title__\" price \"__field:price__\" category \"__field:category__\"",
+                "dataset": "datasets/hybrid_data_100k.csv",
+                "clients": 300
+              }
+            ],
+            "reads": [
+              {
+                "id": "b",
+                "command": "FT.SEARCH rd0 \"__field:term1__ @price:[100 500]\"",
+                "dataset": "datasets/hybrid_queries.csv",
+                "clients": 700
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "port": 6379,
+    "cluster_mode": [
+      false
+    ],
+    "cluster_nodes": 5,
+    "cluster_ports": [
+      6379,
+      6380,
+      6381,
+      6382,
+      6383
+    ],
+    "cpu_allocation": {
+      "cores_per_server": 8,
+      "cores_per_client": 8
+    },
+    "tls_mode": false,
+    "io-threads": 8,
+    "modules": [
+      {
+        "path": "../valkey-search/.build-release/libsearch.so",
+        "startup_args": [
+          "--use-coordinator"
+        ]
+      }
+    ],
+    "config_sets": [
+      {
+        "search.reader-threads": 8,
+        "search.writer-threads": 8,
+        "search.async-fanout-threshold": 4
+      }
+    ],
+    "monitoring": {
+      "cpu_enabled": false,
+      "per_cpu_enabled": false
+    },
+    "profiling_sets": [
+      {
+        "enabled": false
+      }
+    ]
+  }
+]
