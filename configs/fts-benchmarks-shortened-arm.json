@@ -184,6 +184,20 @@
             "options": {
               "": ""
             }
+          },
+          {
+            "id": "d",
+            "type": "read",
+            "cluster_execution": "single",
+            "description": "Single term search TEXT - latency (10 clients)",
+            "dataset": "datasets/search_terms.csv",
+            "clients": 10,
+            "duration": 90,
+            "warmup": 30,
+            "command": "FT.SEARCH rd0 \"__field:term__\"",
+            "options": {
+              "": ""
+            }
           }
         ]
       },
@@ -290,6 +304,20 @@
                 "clients": 700
               }
             ]
+          },
+          {
+            "id": "g",
+            "type": "read",
+            "cluster_execution": "single",
+            "description": "TEXT + NUMERIC range filter - latency (10 clients)",
+            "dataset": "datasets/hybrid_queries.csv",
+            "clients": 10,
+            "duration": 90,
+            "warmup": 30,
+            "command": "FT.SEARCH rd0 \"__field:term1__ @price:[100 500]\"",
+            "options": {
+              "": ""
+            }
           }
         ]
       },
@@ -409,6 +437,20 @@
             "duration": 90,
             "warmup": 30,
             "command": "FT.SEARCH rd0 \"(@price:[10 1000])=>[KNN 10 @embedding $vec EF_RUNTIME 100]\" PARAMS 2 vec \"__field:query_vector__\" DIALECT 2",
+            "options": {
+              "": ""
+            }
+          },
+          {
+            "id": "e",
+            "type": "read",
+            "cluster_execution": "single",
+            "description": "Pure KNN HNSW - latency (10 clients)",
+            "dataset": "datasets/vector_queries_100.npy",
+            "clients": 10,
+            "duration": 90,
+            "warmup": 30,
+            "command": "FT.SEARCH rd0 \"*=>[KNN 10 @embedding $vec EF_RUNTIME 100]\" PARAMS 2 vec \"__field:query_vector__\" DIALECT 2",
             "options": {
               "": ""
             }
@@ -565,6 +607,20 @@
             "options": {
               "": "",
               "NOCONTENT": "_nocontent"
+            }
+          },
+          {
+            "id": "c",
+            "type": "read",
+            "cluster_execution": "parallel",
+            "description": "TEXT + NUMERIC range cluster - latency (10 clients)",
+            "dataset": "datasets/hybrid_queries.csv",
+            "clients": 10,
+            "duration": 90,
+            "warmup": 30,
+            "command": "FT.SEARCH rd0 \"__field:term1__ @price:[100 500]\"",
+            "options": {
+              "": ""
             }
           }
         ]
