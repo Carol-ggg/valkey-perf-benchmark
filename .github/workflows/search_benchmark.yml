@@ -29,6 +29,11 @@ on:
         required: false
         default: ""
         type: string
+      num_runs:
+        description: "Number of times to repeat each read scenario (default: 3)"
+        required: false
+        default: "3"
+        type: string
       skip_profiling:
         description: "Check for skip profiling"
         default: true
@@ -49,6 +54,10 @@ on:
         description: "Module branch to benchmark (default: main)"
         required: false
         default: "main"
+      timeout_minutes:
+        description: "Job timeout in minutes (default 600)"
+        required: false
+        default: "600"
         type: string
   schedule:
     - cron: "0 */4 * * *"
@@ -90,13 +99,14 @@ jobs:
       CONFIG_FILE: "${{ github.workspace }}/valkey-perf-benchmark/configs/${{ inputs.config_json || 'fts-benchmarks-shortened-arm.json' }}"
       # Run parameters
       MAX_MODULE_COMMITS: ${{ inputs.max_module_commits || '1' }}
+      NUM_RUNS: ${{ inputs.num_runs || '3' }}
       CORE_COMMIT_INPUT: ${{ inputs.core_commit || '' }}
       MODULE_COMMITS_INPUT: ${{ inputs.module_commits || '' }}
       CLUSTER_MODE: ${{ inputs.cluster_mode || '' }}
       SKIP_CONFIG_SET: ${{ inputs.skip_config_set && '1' || '' }}
-      SKIP_PROFILING: ${{ (inputs.skip_profiling == false) && '' || '1' }}
+      SKIP_PROFILING: ${{ (github.event_name == 'schedule' || inputs.skip_profiling) && '1' || '' }}
     runs-on: [self-hosted, valkey-search-arm]
-    timeout-minutes: 300
+    timeout-minutes: ${{ fromJSON(inputs.timeout_minutes || '600') }}
     steps:
       - name: Ensure git is installed
         run: command -v git || sudo dnf install -y git
@@ -177,10 +187,10 @@ jobs:
           
           pip install --require-hashes -r requirements.txt
 
-      - name: Ensure GCC >= 13 (required for valkey-search build)
+      - name: Ensure GCC >= 12 (required for valkey-search build)
         # NOTE: This uses AL2023-specific packages. Update if runner OS changes.
         run: |
-          GCC_MIN_VERSION=13
+          GCC_MIN_VERSION=12
           CURRENT_VERSION=0
 
           if /usr/local/bin/gcc --version 2>/dev/null; then
@@ -311,7 +321,7 @@ jobs:
             ${{ steps.determine_commits.outputs.commits }}
 
       # =========================================================================
-      # Loop over module commits: checkout, build, benchmark, push, mark complete
+      # Loop over module commits: checkout, build, and benchmark
       # =========================================================================
 
       - name: Benchmark module commits
@@ -363,6 +373,7 @@ jobs:
               --module-path "$MODULE_PATH/.build-release/libsearch.so" \
               --module-commit "$MODULE_SHA" \
               --module-commit-timestamp "$MODULE_TS" \
+              --runs "$NUM_RUNS" \
               ${CLUSTER_MODE:+--cluster-mode-filter "$CLUSTER_MODE"} \
               ${SKIP_CONFIG_SET:+--skip-config-set} \
               ${SKIP_PROFILING:+--skip-profiling} \
