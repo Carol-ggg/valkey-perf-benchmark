@@ -426,14 +426,15 @@ class ClientRunner:
                         )
                         continue
 
-                    yield {
-                        "format": "test_groups",
-                        "scenario": expanded_scenario,
-                        "group_id": group_id,
-                        "group_description": group_description,
-                        "config_set": self.current_config_set,
-                        "config_suffix": self.config_suffix,
-                    }
+                        yield {
+                            "format": "test_groups",
+                            "scenario": expanded_scenario,
+                            "group_id": group_id,
+                            "group_description": group_description,
+                            "config_set": self.current_config_set,
+                            "config_suffix": self.config_suffix,
+                            "run_num": run_num,
+                        }
 
     def _execute_scenario(
         self, scenario_data, profiler, metrics_processor, profiling_enabled, commit_time
@@ -556,6 +557,7 @@ class ClientRunner:
             data["config_set"],
             data["config_suffix"],
             data.get("group_description"),
+            data.get("run_num", 0),
         )
 
     def _generate_combinations(self) -> List[tuple]:
@@ -850,6 +852,7 @@ class ClientRunner:
         config_set,
         config_suffix,
         group_description=None,
+        run_num=0,
     ):
         """Run a single scenario."""
         scenario_type = scenario.get("type", "test")
@@ -871,7 +874,7 @@ class ClientRunner:
             effective_profiling = self.current_profiling_set
 
         scenario_profiling_enabled = effective_profiling.get("enabled", False)
-        profile_id = f"group{group_id}_{scenario_type}_{scenario_id}_{config_suffix}"
+        profile_id = f"group{group_id}_{scenario_type}_{scenario_id}_{config_suffix}_run{run_num}"
 
         warmup_duration = scenario.get("warmup", 0)
         try:
